@@ -20,7 +20,8 @@ import { io } from "socket.io-client";
 // ============================================================
 
 const SOCKET_URL =
-  import.meta.env.VITE_SOCKET_URL || "https://gulchatbackend.vercel.app";
+  import.meta.env.VITE_SOCKET_URL || "https://gulchatbackend-g62x.vercel.app";
+
 
 function App() {
   const [joined, setJoined] = useState(false);
