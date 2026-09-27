@@ -241,8 +241,6 @@ const ChatRoom = ({
               ),
             ]);
 
-            // Existing member tells new member
-            // that this member is already present.
             socket.emit("send", {
               type: "member-present",
               username: cleanUsername,
@@ -446,31 +444,46 @@ const ChatRoom = ({
 
       newMessage.fileData =
         selectedFile.data;
+
+      // Extra information for receiver
+      newMessage.fileSize =
+        selectedFile.size;
     }
 
     // ==========================================================
     // SEND TO BACKEND
     // ==========================================================
 
-    socket.emit("send", newMessage);
+    try {
+      socket.emit("send", newMessage);
 
-    console.log(
-      "Message sent:",
-      newMessage
-    );
+      console.log(
+        "Message sent:",
+        newMessage
+      );
 
-    // Backend does not return sender's own message.
-    setMessages((prev) => [
-      ...prev,
-      newMessage,
-    ]);
+      // Backend does not return sender's own message.
+      setMessages((prev) => [
+        ...prev,
+        newMessage,
+      ]);
 
-    addMember(cleanUsername);
+      addMember(cleanUsername);
 
-    setMessage("");
-    setSelectedFile(null);
-    setShowEmojiPicker(false);
-    setSelectedMessageIndex(null);
+      setMessage("");
+      setSelectedFile(null);
+      setShowEmojiPicker(false);
+      setSelectedMessageIndex(null);
+    } catch (error) {
+      console.error(
+        "Message sending error:",
+        error
+      );
+
+      alert(
+        "Message could not be sent."
+      );
+    }
   };
 
   // ============================================================
@@ -500,13 +513,24 @@ const ChatRoom = ({
       return;
     }
 
-    // TODO BACKEND:
-    // Production mein file backend/cloud storage par upload hogi
-    // aur Socket.IO ke through sirf file URL send hoga.
+    /*
+      IMPORTANT:
 
-    if (file.size > 5 * 1024 * 1024) {
+      Socket.IO message ke andar base64 file bhej rahe hain.
+      Is liye bohat large files reliable nahi hoti.
+
+      Abhi 2 MB limit rakhi gayi hai.
+      Production mein:
+      File -> Backend/Cloud Storage -> File URL
+      aur Socket.IO mein sirf URL send karna hoga.
+    */
+
+    const MAX_FILE_SIZE =
+      2 * 1024 * 1024;
+
+    if (file.size > MAX_FILE_SIZE) {
       alert(
-        "Please select a document smaller than 5 MB."
+        "Please select a document smaller than 2 MB."
       );
 
       e.target.value = "";
@@ -516,17 +540,40 @@ const ChatRoom = ({
     const reader = new FileReader();
 
     reader.onload = () => {
+      if (
+        typeof reader.result !==
+        "string"
+      ) {
+        alert(
+          "Unable to read this document."
+        );
+
+        return;
+      }
+
       setSelectedFile({
         name: file.name,
         type:
           file.type ||
           "application/octet-stream",
         data: reader.result,
+        size: file.size,
       });
+    };
+
+    reader.onerror = () => {
+      console.error(
+        "File reading failed."
+      );
+
+      alert(
+        "Unable to read this document."
+      );
     };
 
     reader.readAsDataURL(file);
 
+    // Allow same file to be selected again
     e.target.value = "";
   };
 
@@ -535,115 +582,255 @@ const ChatRoom = ({
   };
 
   // ============================================================
-  // OPEN DOCUMENT
-  // ============================================================
-  //
-  // FIX FOR about:blank
-  //
-  // Data URL ko direct window.open karne ke bajaye
-  // Blob URL create kiya ja raha hai.
-  //
-  // Images / PDFs browser ke new tab mein properly open honge.
-  //
+  // GET BLOB FROM BASE64
   // ============================================================
 
-  const openDocumentInNewTab = (
+  const createBlobFromData = (
     fileData,
     fileType
   ) => {
     if (!fileData) {
+      return null;
+    }
+
+    const parts =
+      fileData.split(",");
+
+    if (
+      parts.length < 2
+    ) {
+      return null;
+    }
+
+    const base64Data =
+      parts[1];
+
+    const byteCharacters =
+      atob(base64Data);
+
+    const byteNumbers =
+      new Array(
+        byteCharacters.length
+      );
+
+    for (
+      let i = 0;
+      i < byteCharacters.length;
+      i++
+    ) {
+      byteNumbers[i] =
+        byteCharacters.charCodeAt(i);
+    }
+
+    const byteArray =
+      new Uint8Array(
+        byteNumbers
+      );
+
+    return new Blob(
+      [byteArray],
+      {
+        type:
+          fileType ||
+          "application/octet-stream",
+      }
+    );
+  };
+
+  // ============================================================
+  // OPEN DOCUMENT
+  // ============================================================
+
+  const openDocumentInNewTab = (
+    fileData,
+    fileType,
+    fileName
+  ) => {
+    if (!fileData) {
+      alert(
+        "Document data is not available."
+      );
+
       return;
     }
 
     try {
-      const base64Data =
-        fileData.split(",")[1];
-
-      if (!base64Data) {
-        const newTab = window.open(
+      const blob =
+        createBlobFromData(
           fileData,
-          "_blank"
+          fileType
         );
 
+      if (!blob) {
+        alert(
+          "Unable to open this document."
+        );
+
+        return;
+      }
+
+      const blobUrl =
+        URL.createObjectURL(
+          blob
+        );
+
+      /*
+        Browser PDFs/images ko directly open kar sakta hai.
+
+        Word/Excel/etc. ke liye browser normally
+        direct preview nahi deta, is liye download
+        fallback use hoga.
+      */
+
+      const canPreview =
+        fileType?.startsWith(
+          "image/"
+        ) ||
+        fileType ===
+          "application/pdf" ||
+        fileType ===
+          "text/plain";
+
+      if (canPreview) {
+        const newTab =
+          window.open(
+            blobUrl,
+            "_blank"
+          );
+
         if (!newTab) {
+          URL.revokeObjectURL(
+            blobUrl
+          );
+
           alert(
             "Please allow pop-ups for this chat."
           );
+
+          return;
         }
+
+        newTab.focus();
+
+        setTimeout(() => {
+          URL.revokeObjectURL(
+            blobUrl
+          );
+        }, 60000);
 
         return;
       }
 
-      const byteCharacters =
-        atob(base64Data);
-
-      const byteNumbers = new Array(
-        byteCharacters.length
-      );
-
-      for (
-        let i = 0;
-        i < byteCharacters.length;
-        i++
-      ) {
-        byteNumbers[i] =
-          byteCharacters.charCodeAt(i);
-      }
-
-      const byteArray = new Uint8Array(
-        byteNumbers
-      );
-
-      const blob = new Blob(
-        [byteArray],
-        {
-          type:
-            fileType ||
-            "application/octet-stream",
-        }
-      );
-
-      const blobUrl =
-        URL.createObjectURL(blob);
-
-      const newTab = window.open(
-        blobUrl,
-        "_blank"
-      );
-
-      if (!newTab) {
-        URL.revokeObjectURL(blobUrl);
-
-        alert(
-          "Please allow pop-ups for this chat to open the document."
+      // Non-previewable documents
+      // download automatically.
+      const link =
+        document.createElement(
+          "a"
         );
 
-        return;
-      }
+      link.href = blobUrl;
+      link.download =
+        fileName ||
+        "document";
 
-      newTab.focus();
+      document.body.appendChild(
+        link
+      );
 
-      // Keep the Blob alive while the new tab loads.
+      link.click();
+
+      document.body.removeChild(
+        link
+      );
+
       setTimeout(() => {
-        URL.revokeObjectURL(blobUrl);
-      }, 60000);
+        URL.revokeObjectURL(
+          blobUrl
+        );
+      }, 1000);
     } catch (error) {
       console.error(
         "Document open error:",
         error
       );
 
-      // Fallback
-      const newTab = window.open(
-        fileData,
-        "_blank"
+      alert(
+        "Unable to open this document."
+      );
+    }
+  };
+
+  // ============================================================
+  // DOWNLOAD DOCUMENT
+  // ============================================================
+
+  const downloadDocument = (
+    fileData,
+    fileType,
+    fileName
+  ) => {
+    if (!fileData) {
+      alert(
+        "Document data is not available."
       );
 
-      if (!newTab) {
-        alert(
-          "Unable to open this document. Please allow pop-ups."
+      return;
+    }
+
+    try {
+      const blob =
+        createBlobFromData(
+          fileData,
+          fileType
         );
+
+      if (!blob) {
+        alert(
+          "Unable to download this document."
+        );
+
+        return;
       }
+
+      const blobUrl =
+        URL.createObjectURL(
+          blob
+        );
+
+      const link =
+        document.createElement(
+          "a"
+        );
+
+      link.href = blobUrl;
+      link.download =
+        fileName ||
+        "document";
+
+      document.body.appendChild(
+        link
+      );
+
+      link.click();
+
+      document.body.removeChild(
+        link
+      );
+
+      setTimeout(() => {
+        URL.revokeObjectURL(
+          blobUrl
+        );
+      }, 1000);
+    } catch (error) {
+      console.error(
+        "Document download error:",
+        error
+      );
+
+      alert(
+        "Unable to download this document."
+      );
     }
   };
 
@@ -676,7 +863,6 @@ const ChatRoom = ({
       return [...prev, messageIndex];
     });
 
-    // Remove from favorites also.
     setFavoriteMessages((prev) =>
       prev.filter(
         (index) => index !== messageIndex
@@ -842,7 +1028,7 @@ const ChatRoom = ({
       }));
 
   return (
-    <div className="h-screen w-full flex flex-col bg-[#f3f4f6] overflow-hidden">
+    <div className="h-screen w-full flex flex-col bg-[#FFF7ED] overflow-hidden">
 
       {/* ========================================================
           HEADER
@@ -863,19 +1049,13 @@ const ChatRoom = ({
 
             <div className="min-w-0">
 
-              {/* GROUP LABEL */}
-
               <span className="block text-[10px] sm:text-xs font-bold uppercase tracking-[0.18em] text-orange-100">
                 GROUP
               </span>
 
-              {/* ACTUAL GROUP NAME */}
-
               <h2 className="text-lg sm:text-xl font-extrabold truncate leading-tight">
                 {room}
               </h2>
-
-              {/* MEMBERS */}
 
               <p className="text-xs text-orange-100 truncate mt-0.5">
                 {headerMemberText}
@@ -1001,8 +1181,6 @@ const ChatRoom = ({
               {showMenu && (
                 <div className="absolute right-0 top-12 w-56 bg-white rounded-xl shadow-2xl border border-slate-100 overflow-hidden text-[#071F49] z-50">
 
-                  {/* GROUP INFO */}
-
                   <button
                     type="button"
                     onClick={openGroupInfo}
@@ -1017,8 +1195,6 @@ const ChatRoom = ({
                     </span>
                   </button>
 
-                  {/* SEARCH */}
-
                   <button
                     type="button"
                     onClick={openSearch}
@@ -1032,8 +1208,6 @@ const ChatRoom = ({
                       Search
                     </span>
                   </button>
-
-                  {/* FAVORITE CHAT */}
 
                   <button
                     type="button"
@@ -1052,8 +1226,6 @@ const ChatRoom = ({
                   </button>
 
                   <div className="h-px bg-slate-100" />
-
-                  {/* LEAVE GROUP */}
 
                   <button
                     type="button"
@@ -1394,7 +1566,8 @@ const ChatRoom = ({
                                 <div className="min-w-0 flex-1">
 
                                   <p className="font-semibold text-sm text-[#071F49] truncate">
-                                    {msg.fileName}
+                                    {msg.fileName ||
+                                      "Document"}
                                   </p>
 
                                   <p className="text-xs text-slate-400">
@@ -1405,22 +1578,43 @@ const ChatRoom = ({
 
                               </div>
 
-                              {/* OPEN IN NEW TAB */}
+                              {/* DOCUMENT ACTIONS */}
 
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
+                              <div className="grid grid-cols-2 gap-2 mt-3">
 
-                                  openDocumentInNewTab(
-                                    msg.fileData,
-                                    msg.fileType
-                                  );
-                                }}
-                                className="w-full block mt-3 text-center rounded-lg bg-[#F97316] hover:bg-orange-600 text-white text-xs font-semibold py-2 transition"
-                              >
-                                Open Document
-                              </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+
+                                    openDocumentInNewTab(
+                                      msg.fileData,
+                                      msg.fileType,
+                                      msg.fileName
+                                    );
+                                  }}
+                                  className="rounded-lg bg-[#F97316] hover:bg-orange-600 text-white text-xs font-semibold py-2 transition"
+                                >
+                                  Open
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+
+                                    downloadDocument(
+                                      msg.fileData,
+                                      msg.fileType,
+                                      msg.fileName
+                                    );
+                                  }}
+                                  className="rounded-lg bg-[#071F49] hover:bg-[#0b2d63] text-white text-xs font-semibold py-2 transition"
+                                >
+                                  Download
+                                </button>
+
+                              </div>
 
                             </div>
                           )}
@@ -1457,7 +1651,7 @@ const ChatRoom = ({
           COMPOSER
       ======================================================== */}
 
-      <footer className="shrink-0 bg-white border-t border-slate-200 px-3 sm:px-6 py-3 relative">
+      <footer className="shrink-0 bg-white border-t border-orange-100 px-3 sm:px-6 py-3 relative">
 
         {showEmojiPicker && (
           <div className="absolute bottom-full left-3 mb-2 z-50 shadow-xl rounded-xl overflow-hidden">
@@ -2017,6 +2211,22 @@ const ChatRoom = ({
                                 📄{" "}
                                 {msg.fileName}
                               </p>
+
+                              {msg.fileData && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    downloadDocument(
+                                      msg.fileData,
+                                      msg.fileType,
+                                      msg.fileName
+                                    )
+                                  }
+                                  className="mt-2 text-xs font-semibold text-[#F97316] hover:underline"
+                                >
+                                  Download
+                                </button>
+                              )}
 
                             </div>
                           )}
