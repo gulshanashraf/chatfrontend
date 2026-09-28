@@ -32,12 +32,11 @@ const AVATAR_COLORS = [
   "#FFEDD5",
 ];
 
+const MAX_FILE_SIZE = 2 * 1024 * 1024;
+
 const getInitial = (name = "") => {
   const cleanName = name.trim();
-
-  if (!cleanName) return "?";
-
-  return cleanName.charAt(0).toUpperCase();
+  return cleanName ? cleanName.charAt(0).toUpperCase() : "?";
 };
 
 const getAvatarColor = (name = "") => {
@@ -52,6 +51,29 @@ const getAvatarColor = (name = "") => {
 
 const escapeRegExp = (value) => {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+};
+
+const formatFileSize = (size = 0) => {
+  if (!size) return "";
+
+  if (size < 1024) {
+    return `${size} B`;
+  }
+
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const formatDuration = (seconds = 0) => {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+
+  return `${String(mins).padStart(2, "0")}:${String(
+    secs
+  ).padStart(2, "0")}`;
 };
 
 // ============================================================
@@ -121,20 +143,43 @@ const ChatRoom = ({
   const [selectedMessageIndex, setSelectedMessageIndex] =
     useState(null);
 
+  // ============================================================
+  // MEDIA FILES
+  // ============================================================
+
   const [selectedFile, setSelectedFile] =
     useState(null);
 
-  // ==========================================================
+  const fileInputRef = useRef(null);
+
+  // ============================================================
+  // VOICE RECORDING
+  // ============================================================
+
+  const [isRecording, setIsRecording] =
+    useState(false);
+
+  const [recordingTime, setRecordingTime] =
+    useState(0);
+
+  const [selectedVoice, setSelectedVoice] =
+    useState(null);
+
+  const mediaRecorderRef = useRef(null);
+  const mediaStreamRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const recordingTimerRef = useRef(null);
+  const recordingTimeRef = useRef(0);
+
+  // ============================================================
   // FAVORITE MESSAGES
-  // ==========================================================
+  // ============================================================
 
   const [favoriteMessages, setFavoriteMessages] =
     useState([]);
 
   const [showFavoriteCard, setShowFavoriteCard] =
     useState(false);
-
-  const fileInputRef = useRef(null);
 
   // ============================================================
   // MEMBERS
@@ -220,10 +265,6 @@ const ChatRoom = ({
       const incomingUsername =
         msg?.username?.trim();
 
-      // ========================================================
-      // USER JOINED
-      // ========================================================
-
       if (msg.type === "user-joined") {
         if (incomingUsername) {
           addMember(incomingUsername);
@@ -252,10 +293,6 @@ const ChatRoom = ({
         return;
       }
 
-      // ========================================================
-      // MEMBER PRESENT
-      // ========================================================
-
       if (msg.type === "member-present") {
         if (incomingUsername) {
           addMember(incomingUsername);
@@ -263,10 +300,6 @@ const ChatRoom = ({
 
         return;
       }
-
-      // ========================================================
-      // USER LEFT
-      // ========================================================
 
       if (msg.type === "user-left") {
         if (incomingUsername) {
@@ -291,10 +324,6 @@ const ChatRoom = ({
         return;
       }
 
-      // ========================================================
-      // NORMAL MESSAGE
-      // ========================================================
-
       setMessages((prev) => [...prev, msg]);
 
       if (incomingUsername) {
@@ -303,10 +332,6 @@ const ChatRoom = ({
     };
 
     socket.on("message", handleMessage);
-
-    // ==========================================================
-    // JOIN ROOM
-    // ==========================================================
 
     const joinRoomAndAnnounce = () => {
       socket.emit("join", cleanRoom);
@@ -348,7 +373,7 @@ const ChatRoom = ({
   }, [messages]);
 
   // ============================================================
-  // SEARCH INPUT AUTO FOCUS
+  // SEARCH INPUT
   // ============================================================
 
   useEffect(() => {
@@ -363,7 +388,7 @@ const ChatRoom = ({
   // HIGHLIGHT SEARCH
   // ============================================================
 
-  const renderHighlightedText = (text) => {
+  const renderHighlightedText = (text = "") => {
     if (!searchText.trim()) {
       return text;
     }
@@ -397,7 +422,7 @@ const ChatRoom = ({
   };
 
   // ============================================================
-  // SEND MESSAGE
+  // MESSAGE SENDING
   // ============================================================
 
   const handleSend = (e) => {
@@ -413,7 +438,11 @@ const ChatRoom = ({
       return;
     }
 
-    if (!message.trim() && !selectedFile) {
+    if (
+      !message.trim() &&
+      !selectedFile &&
+      !selectedVoice
+    ) {
       return;
     }
 
@@ -431,9 +460,9 @@ const ChatRoom = ({
       time: currentTime,
     };
 
-    // ==========================================================
-    // DOCUMENT
-    // ==========================================================
+    // ============================================================
+    // MEDIA FILE
+    // ============================================================
 
     if (selectedFile) {
       newMessage.fileName =
@@ -445,14 +474,27 @@ const ChatRoom = ({
       newMessage.fileData =
         selectedFile.data;
 
-      // Extra information for receiver
       newMessage.fileSize =
         selectedFile.size;
     }
 
-    // ==========================================================
-    // SEND TO BACKEND
-    // ==========================================================
+    // ============================================================
+    // VOICE MESSAGE
+    // ============================================================
+
+    if (selectedVoice) {
+      newMessage.voiceData =
+        selectedVoice.data;
+
+      newMessage.voiceType =
+        selectedVoice.type;
+
+      newMessage.voiceSize =
+        selectedVoice.size;
+
+      newMessage.voiceDuration =
+        selectedVoice.duration;
+    }
 
     try {
       socket.emit("send", newMessage);
@@ -462,7 +504,6 @@ const ChatRoom = ({
         newMessage
       );
 
-      // Backend does not return sender's own message.
       setMessages((prev) => [
         ...prev,
         newMessage,
@@ -472,6 +513,7 @@ const ChatRoom = ({
 
       setMessage("");
       setSelectedFile(null);
+      setSelectedVoice(null);
       setShowEmojiPicker(false);
       setSelectedMessageIndex(null);
     } catch (error) {
@@ -503,7 +545,7 @@ const ChatRoom = ({
   };
 
   // ============================================================
-  // DOCUMENT SELECT
+  // MEDIA FILE SELECT
   // ============================================================
 
   const handleFileChange = (e) => {
@@ -513,24 +555,9 @@ const ChatRoom = ({
       return;
     }
 
-    /*
-      IMPORTANT:
-
-      Socket.IO message ke andar base64 file bhej rahe hain.
-      Is liye bohat large files reliable nahi hoti.
-
-      Abhi 2 MB limit rakhi gayi hai.
-      Production mein:
-      File -> Backend/Cloud Storage -> File URL
-      aur Socket.IO mein sirf URL send karna hoga.
-    */
-
-    const MAX_FILE_SIZE =
-      2 * 1024 * 1024;
-
     if (file.size > MAX_FILE_SIZE) {
       alert(
-        "Please select a document smaller than 2 MB."
+        "Please select a file smaller than 2 MB."
       );
 
       e.target.value = "";
@@ -545,7 +572,7 @@ const ChatRoom = ({
         "string"
       ) {
         alert(
-          "Unable to read this document."
+          "Unable to read this file."
         );
 
         return;
@@ -559,6 +586,8 @@ const ChatRoom = ({
         data: reader.result,
         size: file.size,
       });
+
+      setSelectedVoice(null);
     };
 
     reader.onerror = () => {
@@ -567,13 +596,12 @@ const ChatRoom = ({
       );
 
       alert(
-        "Unable to read this document."
+        "Unable to read this file."
       );
     };
 
     reader.readAsDataURL(file);
 
-    // Allow same file to be selected again
     e.target.value = "";
   };
 
@@ -582,7 +610,261 @@ const ChatRoom = ({
   };
 
   // ============================================================
-  // GET BLOB FROM BASE64
+  // VOICE RECORDING
+  // ============================================================
+
+  const clearRecordingTimer = () => {
+    if (recordingTimerRef.current) {
+      clearInterval(
+        recordingTimerRef.current
+      );
+
+      recordingTimerRef.current = null;
+    }
+  };
+
+  const stopMediaStream = () => {
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current
+        .getTracks()
+        .forEach((track) => {
+          track.stop();
+        });
+
+      mediaStreamRef.current = null;
+    }
+  };
+
+  const startVoiceRecording = async () => {
+    if (isRecording) {
+      return;
+    }
+
+    if (
+      !navigator.mediaDevices ||
+      !navigator.mediaDevices.getUserMedia
+    ) {
+      alert(
+        "Voice recording is not supported in this browser."
+      );
+
+      return;
+    }
+
+    try {
+      const stream =
+        await navigator.mediaDevices.getUserMedia({
+          audio: true,
+        });
+
+      mediaStreamRef.current =
+        stream;
+
+      audioChunksRef.current = [];
+      recordingTimeRef.current = 0;
+
+      setRecordingTime(0);
+      setSelectedVoice(null);
+      setSelectedFile(null);
+      setIsRecording(true);
+
+      let mimeType = "";
+
+      if (
+        typeof MediaRecorder !==
+        "undefined"
+      ) {
+        if (
+          MediaRecorder.isTypeSupported(
+            "audio/webm;codecs=opus"
+          )
+        ) {
+          mimeType =
+            "audio/webm;codecs=opus";
+        } else if (
+          MediaRecorder.isTypeSupported(
+            "audio/webm"
+          )
+        ) {
+          mimeType =
+            "audio/webm";
+        } else if (
+          MediaRecorder.isTypeSupported(
+            "audio/mp4"
+          )
+        ) {
+          mimeType =
+            "audio/mp4";
+        }
+      }
+
+      const recorder = mimeType
+        ? new MediaRecorder(
+            stream,
+            { mimeType }
+          )
+        : new MediaRecorder(
+            stream
+          );
+
+      mediaRecorderRef.current =
+        recorder;
+
+      recorder.ondataavailable = (
+        event
+      ) => {
+        if (event.data?.size) {
+          audioChunksRef.current.push(
+            event.data
+          );
+        }
+      };
+
+      recorder.onstop = () => {
+        const finalType =
+          recorder.mimeType ||
+          mimeType ||
+          "audio/webm";
+
+        const blob = new Blob(
+          audioChunksRef.current,
+          {
+            type: finalType,
+          }
+        );
+
+        if (blob.size > MAX_FILE_SIZE) {
+          alert(
+            "Voice message is larger than 2 MB."
+          );
+
+          audioChunksRef.current =
+            [];
+
+          setSelectedVoice(null);
+          stopMediaStream();
+
+          return;
+        }
+
+        const reader =
+          new FileReader();
+
+        reader.onloadend = () => {
+          if (
+            typeof reader.result ===
+            "string"
+          ) {
+            setSelectedVoice({
+              name: `voice-${Date.now()}.webm`,
+              type: finalType,
+              data: reader.result,
+              size: blob.size,
+              duration:
+                recordingTimeRef.current,
+            });
+          }
+
+          stopMediaStream();
+        };
+
+        reader.readAsDataURL(blob);
+
+        clearRecordingTimer();
+        setIsRecording(false);
+      };
+
+      recorder.onerror = () => {
+        clearRecordingTimer();
+        stopMediaStream();
+        setIsRecording(false);
+
+        alert(
+          "Voice recording failed."
+        );
+      };
+
+      recorder.start();
+
+      recordingTimerRef.current =
+        setInterval(() => {
+          recordingTimeRef.current += 1;
+
+          setRecordingTime(
+            recordingTimeRef.current
+          );
+        }, 1000);
+    } catch (error) {
+      console.error(
+        "Microphone error:",
+        error
+      );
+
+      clearRecordingTimer();
+      stopMediaStream();
+      setIsRecording(false);
+
+      alert(
+        "Please allow microphone permission to record voice."
+      );
+    }
+  };
+
+  const stopVoiceRecording = () => {
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current.state !==
+        "inactive"
+    ) {
+      mediaRecorderRef.current.stop();
+    } else {
+      clearRecordingTimer();
+      stopMediaStream();
+      setIsRecording(false);
+    }
+  };
+
+  const cancelVoiceRecording = () => {
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current.state !==
+        "inactive"
+    ) {
+      mediaRecorderRef.current.ondataavailable =
+        null;
+
+      mediaRecorderRef.current.onstop =
+        null;
+
+      mediaRecorderRef.current.stop();
+    }
+
+    clearRecordingTimer();
+    stopMediaStream();
+
+    audioChunksRef.current = [];
+    mediaRecorderRef.current = null;
+
+    recordingTimeRef.current = 0;
+
+    setRecordingTime(0);
+    setIsRecording(false);
+    setSelectedVoice(null);
+  };
+
+  const removeSelectedVoice = () => {
+    setSelectedVoice(null);
+  };
+
+  useEffect(() => {
+    return () => {
+      clearRecordingTimer();
+      stopMediaStream();
+    };
+  }, []);
+
+  // ============================================================
+  // BLOB
   // ============================================================
 
   const createBlobFromData = (
@@ -596,9 +878,7 @@ const ChatRoom = ({
     const parts =
       fileData.split(",");
 
-    if (
-      parts.length < 2
-    ) {
+    if (parts.length < 2) {
       return null;
     }
 
@@ -638,17 +918,17 @@ const ChatRoom = ({
   };
 
   // ============================================================
-  // OPEN DOCUMENT
+  // MEDIA OPEN
   // ============================================================
 
-  const openDocumentInNewTab = (
+  const openMediaInNewTab = (
     fileData,
     fileType,
     fileName
   ) => {
     if (!fileData) {
       alert(
-        "Document data is not available."
+        "File data is not available."
       );
 
       return;
@@ -663,7 +943,7 @@ const ChatRoom = ({
 
       if (!blob) {
         alert(
-          "Unable to open this document."
+          "Unable to open this file."
         );
 
         return;
@@ -674,17 +954,15 @@ const ChatRoom = ({
           blob
         );
 
-      /*
-        Browser PDFs/images ko directly open kar sakta hai.
-
-        Word/Excel/etc. ke liye browser normally
-        direct preview nahi deta, is liye download
-        fallback use hoga.
-      */
-
       const canPreview =
         fileType?.startsWith(
           "image/"
+        ) ||
+        fileType?.startsWith(
+          "video/"
+        ) ||
+        fileType?.startsWith(
+          "audio/"
         ) ||
         fileType ===
           "application/pdf" ||
@@ -721,8 +999,6 @@ const ChatRoom = ({
         return;
       }
 
-      // Non-previewable documents
-      // download automatically.
       const link =
         document.createElement(
           "a"
@@ -731,7 +1007,7 @@ const ChatRoom = ({
       link.href = blobUrl;
       link.download =
         fileName ||
-        "document";
+        "file";
 
       document.body.appendChild(
         link
@@ -750,18 +1026,18 @@ const ChatRoom = ({
       }, 1000);
     } catch (error) {
       console.error(
-        "Document open error:",
+        "File open error:",
         error
       );
 
       alert(
-        "Unable to open this document."
+        "Unable to open this file."
       );
     }
   };
 
   // ============================================================
-  // DOWNLOAD DOCUMENT
+  // DOWNLOAD
   // ============================================================
 
   const downloadDocument = (
@@ -771,7 +1047,7 @@ const ChatRoom = ({
   ) => {
     if (!fileData) {
       alert(
-        "Document data is not available."
+        "File data is not available."
       );
 
       return;
@@ -786,7 +1062,7 @@ const ChatRoom = ({
 
       if (!blob) {
         alert(
-          "Unable to download this document."
+          "Unable to download this file."
         );
 
         return;
@@ -805,7 +1081,7 @@ const ChatRoom = ({
       link.href = blobUrl;
       link.download =
         fileName ||
-        "document";
+        "file";
 
       document.body.appendChild(
         link
@@ -824,18 +1100,18 @@ const ChatRoom = ({
       }, 1000);
     } catch (error) {
       console.error(
-        "Document download error:",
+        "Download error:",
         error
       );
 
       alert(
-        "Unable to download this document."
+        "Unable to download this file."
       );
     }
   };
 
   // ============================================================
-  // MESSAGE SELECT
+  // MESSAGE ACTIONS
   // ============================================================
 
   const selectMessageForActions = (
@@ -847,10 +1123,6 @@ const ChatRoom = ({
         : messageIndex
     );
   };
-
-  // ============================================================
-  // DELETE MESSAGE
-  // ============================================================
 
   const handleDeleteMessage = (
     messageIndex
@@ -870,15 +1142,7 @@ const ChatRoom = ({
     );
 
     setSelectedMessageIndex(null);
-
-    // TODO BACKEND:
-    // Teacher backend currently has no delete-message event.
-    // Current deletion is ONLY on this browser/user side.
   };
-
-  // ============================================================
-  // FAVORITE MESSAGE
-  // ============================================================
 
   const toggleFavoriteMessage = (
     messageIndex
@@ -901,7 +1165,7 @@ const ChatRoom = ({
   };
 
   // ============================================================
-  // FAVORITE CHAT CARD
+  // MENU
   // ============================================================
 
   const openFavoriteChat = () => {
@@ -909,18 +1173,10 @@ const ChatRoom = ({
     setShowFavoriteCard(true);
   };
 
-  // ============================================================
-  // GROUP INFO
-  // ============================================================
-
   const openGroupInfo = () => {
     setShowMenu(false);
     setShowGroupInfo(true);
   };
-
-  // ============================================================
-  // SEARCH
-  // ============================================================
 
   const openSearch = () => {
     setShowMenu(false);
@@ -995,8 +1251,13 @@ const ChatRoom = ({
   const hasMessage =
     message.trim().length > 0;
 
+  const canSend =
+    hasMessage ||
+    selectedFile ||
+    selectedVoice;
+
   // ============================================================
-  // HEADER MEMBERS
+  // HEADER
   // ============================================================
 
   const headerMembers =
@@ -1012,7 +1273,7 @@ const ChatRoom = ({
       : "No members yet";
 
   // ============================================================
-  // FAVORITE MESSAGE LIST
+  // FAVORITE LIST
   // ============================================================
 
   const favoriteMessageItems =
@@ -1027,8 +1288,37 @@ const ChatRoom = ({
         originalIndex: index,
       }));
 
+  // ============================================================
+  // RENDER
+  // ============================================================
+
   return (
     <div className="h-screen w-full flex flex-col bg-[#FFF7ED] overflow-hidden">
+
+      <style>{`
+        @keyframes voiceMove {
+          0% {
+            transform: translateX(120%);
+            opacity: 0.25;
+          }
+          50% {
+            opacity: 1;
+          }
+          100% {
+            transform: translateX(-120%);
+            opacity: 0.25;
+          }
+        }
+
+        @keyframes voiceBars {
+          0%, 100% {
+            transform: scaleY(0.45);
+          }
+          50% {
+            transform: scaleY(1);
+          }
+        }
+      `}</style>
 
       {/* ========================================================
           HEADER
@@ -1037,8 +1327,6 @@ const ChatRoom = ({
       <header className="shrink-0 bg-[#F97316] text-white shadow-md z-40">
 
         <div className="w-full px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
-
-          {/* GROUP IDENTITY */}
 
           <div className="flex items-center gap-3 min-w-0">
 
@@ -1062,13 +1350,10 @@ const ChatRoom = ({
               </p>
 
             </div>
+
           </div>
 
-          {/* HEADER ACTIONS */}
-
           <div className="flex items-center gap-1 shrink-0">
-
-            {/* SEARCH */}
 
             {showSearch && (
               <div className="flex items-center w-[180px] sm:w-[220px] h-9 rounded-lg bg-white/95 px-2 mr-1">
@@ -1118,8 +1403,6 @@ const ChatRoom = ({
               </div>
             )}
 
-            {/* SEARCH BUTTON */}
-
             <button
               type="button"
               onClick={() => {
@@ -1154,8 +1437,6 @@ const ChatRoom = ({
               </svg>
             </button>
 
-            {/* THREE DOTS */}
-
             <div className="relative">
 
               <button
@@ -1189,7 +1470,6 @@ const ChatRoom = ({
                     <span className="text-lg">
                       👥
                     </span>
-
                     <span>
                       Group Info
                     </span>
@@ -1203,7 +1483,6 @@ const ChatRoom = ({
                     <span className="text-lg">
                       🔍
                     </span>
-
                     <span>
                       Search
                     </span>
@@ -1219,7 +1498,6 @@ const ChatRoom = ({
                     <span className="text-lg text-red-500">
                       ♥
                     </span>
-
                     <span>
                       Favorite Chat
                     </span>
@@ -1237,7 +1515,6 @@ const ChatRoom = ({
                     <span className="text-lg">
                       ↪
                     </span>
-
                     <span>
                       Leave Group
                     </span>
@@ -1297,10 +1574,6 @@ const ChatRoom = ({
                   return null;
                 }
 
-                // ==================================================
-                // JOIN NOTIFICATION
-                // ==================================================
-
                 if (
                   msg?.type ===
                   "user-joined-display"
@@ -1323,10 +1596,6 @@ const ChatRoom = ({
                     </div>
                   );
                 }
-
-                // ==================================================
-                // LEAVE NOTIFICATION
-                // ==================================================
 
                 if (
                   msg?.type ===
@@ -1374,10 +1643,25 @@ const ChatRoom = ({
                     idx
                   );
 
+                const isImage =
+                  msg.fileType?.startsWith(
+                    "image/"
+                  );
+
+                const isVideo =
+                  msg.fileType?.startsWith(
+                    "video/"
+                  );
+
+                const isAudio =
+                  msg.fileType?.startsWith(
+                    "audio/"
+                  );
+
                 return (
                   <div
                     key={idx}
-                    className={`flex flex-col max-w-[90%] sm:max-w-[70%] ${
+                    className={`flex flex-col max-w-[95%] sm:max-w-[75%] ${
                       isOwn
                         ? "ml-auto items-end"
                         : "mr-auto items-start"
@@ -1387,15 +1671,11 @@ const ChatRoom = ({
                     }
                   >
 
-                    {/* SENDER */}
-
                     <span className="text-xs font-semibold text-slate-500 mb-1 px-1">
                       {isOwn
                         ? "You"
                         : msg.username}
                     </span>
-
-                    {/* MESSAGE ROW */}
 
                     <div
                       className={`flex items-center gap-2 ${
@@ -1403,17 +1683,10 @@ const ChatRoom = ({
                           ? "justify-end"
                           : "justify-start"
                       }`}
-                      onClick={(e) =>
-                        e.stopPropagation()
-                      }
                     >
-
-                      {/* ACTION ICONS */}
 
                       {isSelected && (
                         <div className="flex items-center gap-1.5 shrink-0">
-
-                          {/* FAVORITE */}
 
                           <button
                             type="button"
@@ -1434,11 +1707,6 @@ const ChatRoom = ({
                                 ? "Remove from favorites"
                                 : "Favorite message"
                             }
-                            aria-label={
-                              isFavorite
-                                ? "Remove from favorites"
-                                : "Favorite message"
-                            }
                           >
                             <svg
                               width="16"
@@ -1451,14 +1719,10 @@ const ChatRoom = ({
                               }
                               stroke="currentColor"
                               strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
                             >
                               <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z" />
                             </svg>
                           </button>
-
-                          {/* DELETE */}
 
                           <button
                             type="button"
@@ -1471,7 +1735,6 @@ const ChatRoom = ({
                             }}
                             className="w-9 h-9 rounded-full bg-slate-100/95 border border-slate-200 text-slate-400 shadow-md flex items-center justify-center hover:bg-slate-200 hover:text-red-500 transition"
                             title="Delete message"
-                            aria-label="Delete message"
                           >
                             <svg
                               width="14"
@@ -1480,8 +1743,6 @@ const ChatRoom = ({
                               fill="none"
                               stroke="currentColor"
                               strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
                             >
                               <path d="M3 6h18" />
                               <path d="M8 6V4h8v2" />
@@ -1493,8 +1754,6 @@ const ChatRoom = ({
 
                         </div>
                       )}
-
-                      {/* MESSAGE BOX */}
 
                       <div
                         className="relative"
@@ -1517,8 +1776,6 @@ const ChatRoom = ({
                           }`}
                         >
 
-                          {/* TEXT */}
-
                           {msg.text && (
                             <p className="text-[#071F49] break-words whitespace-pre-wrap">
                               {renderHighlightedText(
@@ -1527,7 +1784,7 @@ const ChatRoom = ({
                             </p>
                           )}
 
-                          {/* DOCUMENT */}
+                          {/* MEDIA */}
 
                           {msg.fileData && (
                             <div
@@ -1535,59 +1792,99 @@ const ChatRoom = ({
                                 msg.text
                                   ? "mt-3"
                                   : ""
-                              } rounded-xl bg-white/80 border border-slate-200 p-3 min-w-[220px]`}
+                              } rounded-xl bg-white/90 border border-slate-200 p-3 min-w-[240px] max-w-[320px]`}
                               onClick={(e) =>
                                 e.stopPropagation()
                               }
                             >
 
-                              <div className="flex items-center gap-3">
+                              {isImage && (
+                                <img
+                                  src={msg.fileData}
+                                  alt={
+                                    msg.fileName ||
+                                    "Image"
+                                  }
+                                  className="w-full max-h-64 object-cover rounded-lg border border-slate-200 mb-3 cursor-pointer"
+                                  onClick={() =>
+                                    openMediaInNewTab(
+                                      msg.fileData,
+                                      msg.fileType,
+                                      msg.fileName
+                                    )
+                                  }
+                                />
+                              )}
 
-                                <div className="w-10 h-10 rounded-lg bg-orange-100 flex items-center justify-center shrink-0">
+                              {isVideo && (
+                                <video
+                                  src={msg.fileData}
+                                  controls
+                                  className="w-full max-h-64 rounded-lg border border-slate-200 mb-3 bg-black"
+                                />
+                              )}
 
-                                  <svg
-                                    width="20"
-                                    height="20"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="#F97316"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  >
-                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                    <path d="M14 2v6h6" />
-                                    <path d="M8 13h8" />
-                                    <path d="M8 17h5" />
-                                  </svg>
+                              {!isImage &&
+                                !isVideo && (
+                                  <div className="flex items-center gap-3">
 
-                                </div>
+                                    <div className="w-10 h-10 rounded-lg bg-orange-100 flex items-center justify-center shrink-0">
 
-                                <div className="min-w-0 flex-1">
+                                      <svg
+                                        width="20"
+                                        height="20"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="#F97316"
+                                        strokeWidth="2"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      >
+                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                        <path d="M14 2v6h6" />
+                                      </svg>
 
-                                  <p className="font-semibold text-sm text-[#071F49] truncate">
-                                    {msg.fileName ||
-                                      "Document"}
-                                  </p>
+                                    </div>
 
-                                  <p className="text-xs text-slate-400">
-                                    Document
-                                  </p>
+                                    <div className="min-w-0 flex-1">
 
-                                </div>
+                                      <p className="font-semibold text-sm text-[#071F49] truncate">
+                                        {msg.fileName ||
+                                          "File"}
+                                      </p>
 
-                              </div>
+                                      <p className="text-xs text-slate-400">
+                                        {msg.fileType ||
+                                          "File"}
+                                      </p>
 
-                              {/* DOCUMENT ACTIONS */}
+                                    </div>
 
-                              <div className="grid grid-cols-2 gap-2 mt-3">
+                                  </div>
+                              )}
+
+                              {isImage && (
+                                <p className="font-semibold text-xs text-[#071F49] truncate mb-2">
+                                  {msg.fileName ||
+                                    "Image"}
+                                </p>
+                              )}
+
+                              {isVideo && (
+                                <p className="font-semibold text-xs text-[#071F49] truncate mb-2">
+                                  {msg.fileName ||
+                                    "Video"}
+                                </p>
+                              )}
+
+                              <div className="grid grid-cols-2 gap-2 mt-2">
 
                                 <button
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
 
-                                    openDocumentInNewTab(
+                                    openMediaInNewTab(
                                       msg.fileData,
                                       msg.fileType,
                                       msg.fileName
@@ -1619,9 +1916,68 @@ const ChatRoom = ({
                             </div>
                           )}
 
-                          {/* TIME */}
+                          {/* VOICE */}
 
-                          <div className="absolute right-2 bottom-1.5 flex items-center gap-1">
+                          {msg.voiceData && (
+                            <div
+                              className={`${
+                                msg.text ||
+                                msg.fileData
+                                  ? "mt-3"
+                                  : ""
+                              } rounded-xl bg-white/90 border border-slate-200 p-3 min-w-[250px]`}
+                              onClick={(e) =>
+                                e.stopPropagation()
+                              }
+                            >
+
+                              <div className="flex items-center gap-2 mb-2">
+
+                                <div className="w-9 h-9 rounded-full bg-orange-100 text-[#F97316] flex items-center justify-center shrink-0">
+                                  🎙️
+                                </div>
+
+                                <div className="min-w-0">
+
+                                  <p className="text-xs font-bold text-[#071F49]">
+                                    Voice message
+                                  </p>
+
+                                  <p className="text-[10px] text-slate-400">
+                                    {formatDuration(
+                                      msg.voiceDuration
+                                    )}
+                                  </p>
+
+                                </div>
+
+                              </div>
+
+                              <audio
+                                controls
+                                src={msg.voiceData}
+                                className="w-full h-9"
+                              />
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  downloadDocument(
+                                    msg.voiceData,
+                                    msg.voiceType ||
+                                      "audio/webm",
+                                    `voice-${idx}.webm`
+                                  )
+                                }
+                                className="w-full mt-2 rounded-lg bg-[#071F49] hover:bg-[#0b2d63] text-white text-xs font-semibold py-2 transition"
+                              >
+                                Download Voice
+                              </button>
+
+                            </div>
+                          )}
+
+                          <div className="absolute right-2 bottom-1.5">
 
                             <span className="text-[10px] font-medium text-slate-500">
                               {msg.time}
@@ -1691,26 +2047,22 @@ const ChatRoom = ({
 
         </div>
 
-        {/* SELECTED DOCUMENT */}
+        {/* SELECTED FILE */}
 
         {selectedFile && (
           <div className="mb-2 flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2">
 
-            <div className="w-9 h-9 rounded-lg bg-orange-100 flex items-center justify-center shrink-0">
+            <div className="w-10 h-10 rounded-lg bg-orange-100 flex items-center justify-center shrink-0 text-xl">
 
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="#F97316"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <path d="M14 2v6h6" />
-              </svg>
+              {selectedFile.type?.startsWith(
+                "image/"
+              )
+                ? "🖼️"
+                : selectedFile.type?.startsWith(
+                    "video/"
+                  )
+                ? "🎥"
+                : "📄"}
 
             </div>
 
@@ -1721,7 +2073,10 @@ const ChatRoom = ({
               </p>
 
               <p className="text-xs text-slate-400">
-                Ready to send
+                {formatFileSize(
+                  selectedFile.size
+                )}{" "}
+                • Ready to send
               </p>
 
             </div>
@@ -1732,7 +2087,51 @@ const ChatRoom = ({
                 removeSelectedFile
               }
               className="w-8 h-8 rounded-lg hover:bg-white text-slate-400 hover:text-red-600 transition"
-              title="Remove document"
+              title="Remove file"
+            >
+              ✕
+            </button>
+
+          </div>
+        )}
+
+        {/* SELECTED VOICE */}
+
+        {selectedVoice && !isRecording && (
+          <div className="mb-2 flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2">
+
+            <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center text-[#F97316] shrink-0">
+              🎙️
+            </div>
+
+            <div className="min-w-0 flex-1">
+
+              <p className="text-sm font-semibold text-[#071F49]">
+                Voice message
+              </p>
+
+              <p className="text-xs text-slate-400">
+                {formatDuration(
+                  selectedVoice.duration
+                )}{" "}
+                • Ready to send
+              </p>
+
+            </div>
+
+            <audio
+              controls
+              src={selectedVoice.data}
+              className="w-[150px] h-8 hidden sm:block"
+            />
+
+            <button
+              type="button"
+              onClick={
+                removeSelectedVoice
+              }
+              className="w-8 h-8 rounded-lg hover:bg-white text-slate-400 hover:text-red-600 transition"
+              title="Remove voice"
             >
               ✕
             </button>
@@ -1763,7 +2162,7 @@ const ChatRoom = ({
             😊
           </button>
 
-          {/* DOCUMENT */}
+          {/* ATTACHMENT */}
 
           <button
             type="button"
@@ -1771,8 +2170,8 @@ const ChatRoom = ({
               fileInputRef.current?.click()
             }
             className="shrink-0 w-10 h-10 rounded-xl bg-orange-100 hover:bg-orange-200 text-[#F97316] flex items-center justify-center transition"
-            aria-label="Attach document"
-            title="Attach document"
+            aria-label="Attach file"
+            title="Photo, Video or Document"
           >
             <svg
               width="19"
@@ -1789,38 +2188,175 @@ const ChatRoom = ({
           <input
             ref={fileInputRef}
             type="file"
+            accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
             onChange={
               handleFileChange
             }
             className="hidden"
           />
 
-          {/* MESSAGE INPUT */}
+          {/* ONE INPUT BOX + VOICE */}
 
-          <input
-            type="text"
-            placeholder="Type a message..."
-            value={message}
-            onChange={(e) =>
-              setMessage(
-                e.target.value
-              )
-            }
-            className="flex-1 min-w-0 rounded-xl border-2 border-orange-300 bg-orange-50/30 px-4 py-2.5 text-[#071F49] placeholder:text-slate-400 outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-100 focus:bg-white transition"
-            autoFocus
-          />
+          <div className="relative flex-1 min-w-0">
+
+            {isRecording ? (
+
+              <div className="relative w-full h-11 rounded-xl border-2 border-[#F97316] bg-orange-50 overflow-hidden flex items-center px-3">
+
+                <button
+                  type="button"
+                  onClick={
+                    cancelVoiceRecording
+                  }
+                  className="relative z-20 shrink-0 w-8 h-8 rounded-full bg-red-50 text-red-600 hover:bg-red-100 flex items-center justify-center font-bold"
+                  title="Cancel recording"
+                >
+                  ✕
+                </button>
+
+                <div className="relative flex-1 h-full flex items-center px-3 overflow-hidden">
+
+                  <div
+                    className="absolute left-0 right-0 h-1 rounded-full bg-orange-100 overflow-hidden"
+                  >
+                    <div
+                      className="absolute w-24 h-1 rounded-full bg-[#F97316]"
+                      style={{
+                        animation:
+                          "voiceMove 1.2s linear infinite",
+                      }}
+                    />
+                  </div>
+
+                  <div className="relative z-10 flex items-center gap-2 bg-orange-50/90 pr-2">
+
+                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+
+                    <span className="text-sm font-semibold text-[#071F49]">
+                      Recording
+                    </span>
+
+                    <span className="text-xs font-bold text-[#F97316]">
+                      {formatDuration(
+                        recordingTime
+                      )}
+                    </span>
+
+                  </div>
+
+                  <div className="absolute right-2 flex items-center gap-1 h-7">
+
+                    {[4, 7, 10, 6, 9, 5, 8].map(
+                      (height, index) => (
+                        <span
+                          key={index}
+                          className="w-1 rounded-full bg-[#F97316]"
+                          style={{
+                            height: `${height * 2}px`,
+                            animation:
+                              `voiceBars 0.7s ease-in-out ${
+                                index * 0.08
+                              }s infinite`,
+                          }}
+                        />
+                      )
+                    )}
+
+                  </div>
+
+                </div>
+
+                <button
+                  type="button"
+                  onClick={
+                    stopVoiceRecording
+                  }
+                  className="relative z-20 shrink-0 w-9 h-9 rounded-full bg-[#F97316] hover:bg-orange-600 text-white flex items-center justify-center shadow-sm"
+                  title="Stop recording"
+                >
+                  <span className="w-3.5 h-3.5 rounded-sm bg-white" />
+                </button>
+
+              </div>
+
+            ) : (
+
+              <div className="relative w-full">
+
+                <input
+                  type="text"
+                  placeholder={
+                    selectedVoice
+                      ? "Voice message ready..."
+                      : "Type a message..."
+                  }
+                  value={message}
+                  onChange={(e) =>
+                    setMessage(
+                      e.target.value
+                    )
+                  }
+                  disabled={
+                    !!selectedVoice
+                  }
+                  className="w-full h-11 rounded-xl border-2 border-orange-300 bg-orange-50/30 pl-4 pr-14 py-2.5 text-[#071F49] placeholder:text-slate-400 outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-100 focus:bg-white transition disabled:cursor-default disabled:text-slate-500"
+                  autoFocus
+                />
+
+                {/* MIC INSIDE INPUT */}
+
+                <button
+                  type="button"
+                  onClick={
+                    startVoiceRecording
+                  }
+                  disabled={
+                    !!selectedVoice
+                  }
+                  className={`absolute right-1.5 top-1/2 -translate-y-1/2 w-9 h-9 rounded-lg flex items-center justify-center transition ${
+                    selectedVoice
+                      ? "bg-slate-100 text-slate-300 cursor-not-allowed"
+                      : "bg-orange-100 text-[#F97316] hover:bg-orange-200"
+                  }`}
+                  title="Record voice"
+                  aria-label="Record voice"
+                >
+                  <svg
+                    width="19"
+                    height="19"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect
+                      x="9"
+                      y="2"
+                      width="6"
+                      height="12"
+                      rx="3"
+                    />
+                    <path d="M5 10a7 7 0 0 0 14 0" />
+                    <path d="M12 19v3" />
+                    <path d="M8 22h8" />
+                  </svg>
+                </button>
+
+              </div>
+
+            )}
+
+          </div>
 
           {/* SEND */}
 
           <button
             type="submit"
-            disabled={
-              !hasMessage &&
-              !selectedFile
-            }
+            disabled={!canSend || isRecording}
             className={`shrink-0 px-5 py-2.5 rounded-xl text-white font-semibold shadow-sm transition ${
-              hasMessage ||
-              selectedFile
+              canSend && !isRecording
                 ? "bg-[#F97316] hover:bg-orange-600"
                 : "bg-orange-200 cursor-not-allowed"
             }`}
@@ -1833,7 +2369,7 @@ const ChatRoom = ({
       </footer>
 
       {/* ========================================================
-          GROUP INFO MODAL
+          GROUP INFO
       ======================================================== */}
 
       {showGroupInfo && (
@@ -1850,8 +2386,6 @@ const ChatRoom = ({
               e.stopPropagation()
             }
           >
-
-            {/* ORANGE RIBBON */}
 
             <div className="bg-[#F97316] text-white px-5 py-4 flex items-center justify-between">
 
@@ -1870,8 +2404,6 @@ const ChatRoom = ({
               </button>
 
             </div>
-
-            {/* GROUP IDENTITY */}
 
             <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
 
@@ -1900,8 +2432,6 @@ const ChatRoom = ({
               </div>
 
             </div>
-
-            {/* MEMBER SEARCH */}
 
             <div className="p-4 border-b border-slate-100">
 
@@ -1939,8 +2469,6 @@ const ChatRoom = ({
               </div>
 
             </div>
-
-            {/* MEMBERS */}
 
             <div className="px-4 py-3">
 
@@ -2036,7 +2564,7 @@ const ChatRoom = ({
       )}
 
       {/* ========================================================
-          FAVORITE MESSAGES CARD
+          FAVORITE MESSAGES
       ======================================================== */}
 
       {showFavoriteCard && (
@@ -2053,8 +2581,6 @@ const ChatRoom = ({
               e.stopPropagation()
             }
           >
-
-            {/* HEADER */}
 
             <div className="bg-[#F97316] text-white px-5 py-4 flex items-center justify-between">
 
@@ -2102,8 +2628,6 @@ const ChatRoom = ({
               </button>
 
             </div>
-
-            {/* FAVORITE LIST */}
 
             <div className="p-4 max-h-[60vh] overflow-y-auto">
 
@@ -2213,20 +2737,54 @@ const ChatRoom = ({
                               </p>
 
                               {msg.fileData && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    downloadDocument(
-                                      msg.fileData,
-                                      msg.fileType,
-                                      msg.fileName
-                                    )
-                                  }
-                                  className="mt-2 text-xs font-semibold text-[#F97316] hover:underline"
-                                >
-                                  Download
-                                </button>
+                                <div className="flex gap-3 mt-2">
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      openMediaInNewTab(
+                                        msg.fileData,
+                                        msg.fileType,
+                                        msg.fileName
+                                      )
+                                    }
+                                    className="text-xs font-semibold text-[#F97316] hover:underline"
+                                  >
+                                    Open
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      downloadDocument(
+                                        msg.fileData,
+                                        msg.fileType,
+                                        msg.fileName
+                                      )
+                                    }
+                                    className="text-xs font-semibold text-[#071F49] hover:underline"
+                                  >
+                                    Download
+                                  </button>
+
+                                </div>
                               )}
+
+                            </div>
+                          )}
+
+                          {msg.voiceData && (
+                            <div className="mt-2 rounded-lg bg-white border border-slate-200 px-3 py-2">
+
+                              <p className="text-xs font-semibold text-[#071F49] mb-2">
+                                🎙️ Voice message
+                              </p>
+
+                              <audio
+                                controls
+                                src={msg.voiceData}
+                                className="w-full h-8"
+                              />
 
                             </div>
                           )}
