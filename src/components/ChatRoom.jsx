@@ -14,6 +14,8 @@ const QUICK_EMOJIS = [
   "🙌",
 ];
 
+const REACTION_EMOJIS = ["❤️", "👍", "😂", "😮", "😢", "😡"];
+
 const MESSAGE_COLORS = [
   "bg-orange-100 border-orange-200",
   "bg-purple-100 border-purple-200",
@@ -56,9 +58,7 @@ const escapeRegExp = (value) => {
 const formatFileSize = (size = 0) => {
   if (!size) return "";
 
-  if (size < 1024) {
-    return `${size} B`;
-  }
+  if (size < 1024) return `${size} B`;
 
   if (size < 1024 * 1024) {
     return `${(size / 1024).toFixed(1)} KB`;
@@ -71,9 +71,10 @@ const formatDuration = (seconds = 0) => {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
 
-  return `${String(mins).padStart(2, "0")}:${String(
-    secs
-  ).padStart(2, "0")}`;
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(
+    2,
+    "0"
+  )}`;
 };
 
 // ============================================================
@@ -90,13 +91,8 @@ const InitialAvatar = ({
 
   let sizeClass = "w-11 h-11 text-base";
 
-  if (small) {
-    sizeClass = "w-9 h-9 text-sm";
-  }
-
-  if (large) {
-    sizeClass = "w-12 h-12 text-lg";
-  }
+  if (small) sizeClass = "w-9 h-9 text-sm";
+  if (large) sizeClass = "w-12 h-12 text-lg";
 
   return (
     <div
@@ -111,59 +107,65 @@ const InitialAvatar = ({
   );
 };
 
-const ChatRoom = ({
-  username,
-  room,
-  socket,
-  onLeave,
-}) => {
+const ChatRoom = ({ username, room, socket, onLeave }) => {
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
 
   const messagesEndRef = useRef(null);
 
-  const [showEmojiPicker, setShowEmojiPicker] =
-    useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   const [showSearch, setShowSearch] = useState(false);
   const [searchText, setSearchText] = useState("");
-
   const searchInputRef = useRef(null);
 
   const [showMenu, setShowMenu] = useState(false);
 
-  const [showGroupInfo, setShowGroupInfo] =
-    useState(false);
-
+  const [showGroupInfo, setShowGroupInfo] = useState(false);
   const [memberSearch, setMemberSearch] = useState("");
 
-  const [deletedMessages, setDeletedMessages] =
-    useState([]);
+  const [deletedMessages, setDeletedMessages] = useState([]);
+  const [selectedMessageIndex, setSelectedMessageIndex] = useState(null);
 
-  const [selectedMessageIndex, setSelectedMessageIndex] =
-    useState(null);
+  // ============================================================
+  // THEME
+  // ============================================================
+
+  const [darkMode, setDarkMode] = useState(false);
+
+  // ============================================================
+  // PINNED MESSAGE
+  // ============================================================
+
+  const [pinnedMessageIndex, setPinnedMessageIndex] = useState(null);
+
+  // ============================================================
+  // MESSAGE REACTIONS
+  // ============================================================
+
+  const [messageReactions, setMessageReactions] = useState({});
+
+  const [showReactionPicker, setShowReactionPicker] = useState(false);
 
   // ============================================================
   // MEDIA FILES
   // ============================================================
 
-  const [selectedFile, setSelectedFile] =
-    useState(null);
+  const [selectedFile, setSelectedFile] = useState(null);
+
+  const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
 
   const fileInputRef = useRef(null);
+  const mediaInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
 
   // ============================================================
   // VOICE RECORDING
   // ============================================================
 
-  const [isRecording, setIsRecording] =
-    useState(false);
-
-  const [recordingTime, setRecordingTime] =
-    useState(0);
-
-  const [selectedVoice, setSelectedVoice] =
-    useState(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [selectedVoice, setSelectedVoice] = useState(null);
 
   const mediaRecorderRef = useRef(null);
   const mediaStreamRef = useRef(null);
@@ -175,11 +177,8 @@ const ChatRoom = ({
   // FAVORITE MESSAGES
   // ============================================================
 
-  const [favoriteMessages, setFavoriteMessages] =
-    useState([]);
-
-  const [showFavoriteCard, setShowFavoriteCard] =
-    useState(false);
+  const [favoriteMessages, setFavoriteMessages] = useState([]);
+  const [showFavoriteCard, setShowFavoriteCard] = useState(false);
 
   // ============================================================
   // MEMBERS
@@ -187,7 +186,6 @@ const ChatRoom = ({
 
   const [members, setMembers] = useState(() => {
     const cleanUsername = username?.trim();
-
     return cleanUsername ? [cleanUsername] : [];
   });
 
@@ -198,20 +196,15 @@ const ChatRoom = ({
   const addMember = (memberName) => {
     const cleanName = memberName?.trim();
 
-    if (!cleanName) {
-      return;
-    }
+    if (!cleanName) return;
 
     setMembers((prev) => {
       const exists = prev.some(
         (member) =>
-          member.toLowerCase() ===
-          cleanName.toLowerCase()
+          member.toLowerCase() === cleanName.toLowerCase()
       );
 
-      if (exists) {
-        return prev;
-      }
+      if (exists) return prev;
 
       return [...prev, cleanName];
     });
@@ -232,11 +225,7 @@ const ChatRoom = ({
   // SYSTEM MESSAGE
   // ============================================================
 
-  const createSystemMessage = (
-    type,
-    memberName,
-    time
-  ) => {
+  const createSystemMessage = (type, memberName, time) => {
     return {
       type,
       username: memberName,
@@ -250,20 +239,15 @@ const ChatRoom = ({
   // ============================================================
 
   useEffect(() => {
-    if (!socket || !room || !username) {
-      return;
-    }
+    if (!socket || !room || !username) return;
 
     const cleanUsername = username.trim();
     const cleanRoom = room.trim();
 
     const handleMessage = (msg) => {
-      if (!msg) {
-        return;
-      }
+      if (!msg) return;
 
-      const incomingUsername =
-        msg?.username?.trim();
+      const incomingUsername = msg?.username?.trim();
 
       if (msg.type === "user-joined") {
         if (incomingUsername) {
@@ -294,10 +278,7 @@ const ChatRoom = ({
       }
 
       if (msg.type === "member-present") {
-        if (incomingUsername) {
-          addMember(incomingUsername);
-        }
-
+        if (incomingUsername) addMember(incomingUsername);
         return;
       }
 
@@ -326,9 +307,7 @@ const ChatRoom = ({
 
       setMessages((prev) => [...prev, msg]);
 
-      if (incomingUsername) {
-        addMember(incomingUsername);
-      }
+      if (incomingUsername) addMember(incomingUsername);
     };
 
     socket.on("message", handleMessage);
@@ -389,13 +368,9 @@ const ChatRoom = ({
   // ============================================================
 
   const renderHighlightedText = (text = "") => {
-    if (!searchText.trim()) {
-      return text;
-    }
+    if (!searchText.trim()) return text;
 
-    const safeSearch = escapeRegExp(
-      searchText.trim()
-    );
+    const safeSearch = escapeRegExp(searchText.trim());
 
     const parts = text.split(
       new RegExp(`(${safeSearch})`, "gi")
@@ -428,12 +403,7 @@ const ChatRoom = ({
   const handleSend = (e) => {
     e.preventDefault();
 
-    if (!socket) {
-      console.error("Socket is not available.");
-      return;
-    }
-
-    if (!socket.connected) {
+    if (!socket || !socket.connected) {
       console.error("Socket is not connected.");
       return;
     }
@@ -448,9 +418,7 @@ const ChatRoom = ({
 
     const currentTime = getCurrentTime();
 
-    const cleanUsername =
-      username?.trim() || "You";
-
+    const cleanUsername = username?.trim() || "You";
     const cleanRoom = room?.trim();
 
     const newMessage = {
@@ -460,54 +428,24 @@ const ChatRoom = ({
       time: currentTime,
     };
 
-    // ============================================================
-    // MEDIA FILE
-    // ============================================================
-
     if (selectedFile) {
-      newMessage.fileName =
-        selectedFile.name;
-
-      newMessage.fileType =
-        selectedFile.type;
-
-      newMessage.fileData =
-        selectedFile.data;
-
-      newMessage.fileSize =
-        selectedFile.size;
+      newMessage.fileName = selectedFile.name;
+      newMessage.fileType = selectedFile.type;
+      newMessage.fileData = selectedFile.data;
+      newMessage.fileSize = selectedFile.size;
     }
 
-    // ============================================================
-    // VOICE MESSAGE
-    // ============================================================
-
     if (selectedVoice) {
-      newMessage.voiceData =
-        selectedVoice.data;
-
-      newMessage.voiceType =
-        selectedVoice.type;
-
-      newMessage.voiceSize =
-        selectedVoice.size;
-
-      newMessage.voiceDuration =
-        selectedVoice.duration;
+      newMessage.voiceData = selectedVoice.data;
+      newMessage.voiceType = selectedVoice.type;
+      newMessage.voiceSize = selectedVoice.size;
+      newMessage.voiceDuration = selectedVoice.duration;
     }
 
     try {
       socket.emit("send", newMessage);
 
-      console.log(
-        "Message sent:",
-        newMessage
-      );
-
-      setMessages((prev) => [
-        ...prev,
-        newMessage,
-      ]);
+      setMessages((prev) => [...prev, newMessage]);
 
       addMember(cleanUsername);
 
@@ -515,16 +453,11 @@ const ChatRoom = ({
       setSelectedFile(null);
       setSelectedVoice(null);
       setShowEmojiPicker(false);
+      setShowAttachmentMenu(false);
       setSelectedMessageIndex(null);
     } catch (error) {
-      console.error(
-        "Message sending error:",
-        error
-      );
-
-      alert(
-        "Message could not be sent."
-      );
+      console.error("Message sending error:", error);
+      alert("Message could not be sent.");
     }
   };
 
@@ -533,76 +466,61 @@ const ChatRoom = ({
   // ============================================================
 
   const handleEmojiClick = (emojiData) => {
-    setMessage(
-      (prev) => prev + emojiData.emoji
-    );
+    setMessage((prev) => prev + emojiData.emoji);
   };
 
   const addQuickEmoji = (emoji) => {
-    setMessage(
-      (prev) => prev + emoji
-    );
+    setMessage((prev) => prev + emoji);
   };
 
   // ============================================================
   // MEDIA FILE SELECT
   // ============================================================
 
-  const handleFileChange = (e) => {
-    const file = e.target.files?.[0];
-
-    if (!file) {
-      return;
-    }
+  const processSelectedFile = (file, inputElement) => {
+    if (!file) return;
 
     if (file.size > MAX_FILE_SIZE) {
-      alert(
-        "Please select a file smaller than 2 MB."
-      );
+      alert("Please select a file smaller than 2 MB.");
 
-      e.target.value = "";
+      if (inputElement) inputElement.value = "";
       return;
     }
 
     const reader = new FileReader();
 
     reader.onload = () => {
-      if (
-        typeof reader.result !==
-        "string"
-      ) {
-        alert(
-          "Unable to read this file."
-        );
-
+      if (typeof reader.result !== "string") {
+        alert("Unable to read this file.");
         return;
       }
 
       setSelectedFile({
         name: file.name,
         type:
-          file.type ||
-          "application/octet-stream",
+          file.type || "application/octet-stream",
         data: reader.result,
         size: file.size,
       });
 
       setSelectedVoice(null);
+      setShowAttachmentMenu(false);
     };
 
     reader.onerror = () => {
-      console.error(
-        "File reading failed."
-      );
-
-      alert(
-        "Unable to read this file."
-      );
+      alert("Unable to read this file.");
     };
 
     reader.readAsDataURL(file);
 
-    e.target.value = "";
+    if (inputElement) inputElement.value = "";
+  };
+
+  const handleFileChange = (e) => {
+    processSelectedFile(
+      e.target.files?.[0],
+      e.target
+    );
   };
 
   const removeSelectedFile = () => {
@@ -615,30 +533,23 @@ const ChatRoom = ({
 
   const clearRecordingTimer = () => {
     if (recordingTimerRef.current) {
-      clearInterval(
-        recordingTimerRef.current
-      );
-
+      clearInterval(recordingTimerRef.current);
       recordingTimerRef.current = null;
     }
   };
 
   const stopMediaStream = () => {
     if (mediaStreamRef.current) {
-      mediaStreamRef.current
-        .getTracks()
-        .forEach((track) => {
-          track.stop();
-        });
+      mediaStreamRef.current.getTracks().forEach((track) => {
+        track.stop();
+      });
 
       mediaStreamRef.current = null;
     }
   };
 
   const startVoiceRecording = async () => {
-    if (isRecording) {
-      return;
-    }
+    if (isRecording) return;
 
     if (
       !navigator.mediaDevices ||
@@ -647,7 +558,6 @@ const ChatRoom = ({
       alert(
         "Voice recording is not supported in this browser."
       );
-
       return;
     }
 
@@ -657,8 +567,7 @@ const ChatRoom = ({
           audio: true,
         });
 
-      mediaStreamRef.current =
-        stream;
+      mediaStreamRef.current = stream;
 
       audioChunksRef.current = [];
       recordingTimeRef.current = 0;
@@ -670,53 +579,33 @@ const ChatRoom = ({
 
       let mimeType = "";
 
-      if (
-        typeof MediaRecorder !==
-        "undefined"
-      ) {
+      if (typeof MediaRecorder !== "undefined") {
         if (
           MediaRecorder.isTypeSupported(
             "audio/webm;codecs=opus"
           )
         ) {
-          mimeType =
-            "audio/webm;codecs=opus";
+          mimeType = "audio/webm;codecs=opus";
         } else if (
-          MediaRecorder.isTypeSupported(
-            "audio/webm"
-          )
+          MediaRecorder.isTypeSupported("audio/webm")
         ) {
-          mimeType =
-            "audio/webm";
+          mimeType = "audio/webm";
         } else if (
-          MediaRecorder.isTypeSupported(
-            "audio/mp4"
-          )
+          MediaRecorder.isTypeSupported("audio/mp4")
         ) {
-          mimeType =
-            "audio/mp4";
+          mimeType = "audio/mp4";
         }
       }
 
       const recorder = mimeType
-        ? new MediaRecorder(
-            stream,
-            { mimeType }
-          )
-        : new MediaRecorder(
-            stream
-          );
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
 
-      mediaRecorderRef.current =
-        recorder;
+      mediaRecorderRef.current = recorder;
 
-      recorder.ondataavailable = (
-        event
-      ) => {
+      recorder.ondataavailable = (event) => {
         if (event.data?.size) {
-          audioChunksRef.current.push(
-            event.data
-          );
+          audioChunksRef.current.push(event.data);
         }
       };
 
@@ -728,40 +617,29 @@ const ChatRoom = ({
 
         const blob = new Blob(
           audioChunksRef.current,
-          {
-            type: finalType,
-          }
+          { type: finalType }
         );
 
         if (blob.size > MAX_FILE_SIZE) {
-          alert(
-            "Voice message is larger than 2 MB."
-          );
+          alert("Voice message is larger than 2 MB.");
 
-          audioChunksRef.current =
-            [];
-
+          audioChunksRef.current = [];
           setSelectedVoice(null);
           stopMediaStream();
 
           return;
         }
 
-        const reader =
-          new FileReader();
+        const reader = new FileReader();
 
         reader.onloadend = () => {
-          if (
-            typeof reader.result ===
-            "string"
-          ) {
+          if (typeof reader.result === "string") {
             setSelectedVoice({
               name: `voice-${Date.now()}.webm`,
               type: finalType,
               data: reader.result,
               size: blob.size,
-              duration:
-                recordingTimeRef.current,
+              duration: recordingTimeRef.current,
             });
           }
 
@@ -779,26 +657,18 @@ const ChatRoom = ({
         stopMediaStream();
         setIsRecording(false);
 
-        alert(
-          "Voice recording failed."
-        );
+        alert("Voice recording failed.");
       };
 
       recorder.start();
 
-      recordingTimerRef.current =
-        setInterval(() => {
-          recordingTimeRef.current += 1;
+      recordingTimerRef.current = setInterval(() => {
+        recordingTimeRef.current += 1;
 
-          setRecordingTime(
-            recordingTimeRef.current
-          );
-        }, 1000);
+        setRecordingTime(recordingTimeRef.current);
+      }, 1000);
     } catch (error) {
-      console.error(
-        "Microphone error:",
-        error
-      );
+      console.error("Microphone error:", error);
 
       clearRecordingTimer();
       stopMediaStream();
@@ -813,8 +683,7 @@ const ChatRoom = ({
   const stopVoiceRecording = () => {
     if (
       mediaRecorderRef.current &&
-      mediaRecorderRef.current.state !==
-        "inactive"
+      mediaRecorderRef.current.state !== "inactive"
     ) {
       mediaRecorderRef.current.stop();
     } else {
@@ -827,15 +696,10 @@ const ChatRoom = ({
   const cancelVoiceRecording = () => {
     if (
       mediaRecorderRef.current &&
-      mediaRecorderRef.current.state !==
-        "inactive"
+      mediaRecorderRef.current.state !== "inactive"
     ) {
-      mediaRecorderRef.current.ondataavailable =
-        null;
-
-      mediaRecorderRef.current.onstop =
-        null;
-
+      mediaRecorderRef.current.ondataavailable = null;
+      mediaRecorderRef.current.onstop = null;
       mediaRecorderRef.current.stop();
     }
 
@@ -871,50 +735,41 @@ const ChatRoom = ({
     fileData,
     fileType
   ) => {
-    if (!fileData) {
-      return null;
-    }
+    if (!fileData) return null;
 
-    const parts =
-      fileData.split(",");
+    try {
+      const parts = fileData.split(",");
 
-    if (parts.length < 2) {
-      return null;
-    }
+      if (parts.length < 2) return null;
 
-    const base64Data =
-      parts[1];
+      const base64Data = parts[1];
 
-    const byteCharacters =
-      atob(base64Data);
+      const byteCharacters = atob(base64Data);
 
-    const byteNumbers =
-      new Array(
+      const byteNumbers = new Array(
         byteCharacters.length
       );
 
-    for (
-      let i = 0;
-      i < byteCharacters.length;
-      i++
-    ) {
-      byteNumbers[i] =
-        byteCharacters.charCodeAt(i);
-    }
+      for (
+        let i = 0;
+        i < byteCharacters.length;
+        i++
+      ) {
+        byteNumbers[i] =
+          byteCharacters.charCodeAt(i);
+      }
 
-    const byteArray =
-      new Uint8Array(
-        byteNumbers
-      );
+      const byteArray = new Uint8Array(byteNumbers);
 
-    return new Blob(
-      [byteArray],
-      {
+      return new Blob([byteArray], {
         type:
           fileType ||
           "application/octet-stream",
-      }
-    );
+      });
+    } catch (error) {
+      console.error("Blob creation error:", error);
+      return null;
+    }
   };
 
   // ============================================================
@@ -927,112 +782,68 @@ const ChatRoom = ({
     fileName
   ) => {
     if (!fileData) {
-      alert(
-        "File data is not available."
-      );
-
+      alert("File data is not available.");
       return;
     }
 
     try {
-      const blob =
-        createBlobFromData(
-          fileData,
-          fileType
-        );
+      const blob = createBlobFromData(
+        fileData,
+        fileType
+      );
 
       if (!blob) {
-        alert(
-          "Unable to open this file."
-        );
-
+        alert("Unable to open this file.");
         return;
       }
 
-      const blobUrl =
-        URL.createObjectURL(
-          blob
-        );
+      const blobUrl = URL.createObjectURL(blob);
 
       const canPreview =
-        fileType?.startsWith(
-          "image/"
-        ) ||
-        fileType?.startsWith(
-          "video/"
-        ) ||
-        fileType?.startsWith(
-          "audio/"
-        ) ||
-        fileType ===
-          "application/pdf" ||
-        fileType ===
-          "text/plain";
+        fileType?.startsWith("image/") ||
+        fileType?.startsWith("video/") ||
+        fileType?.startsWith("audio/") ||
+        fileType === "application/pdf" ||
+        fileType === "text/plain";
 
       if (canPreview) {
-        const newTab =
-          window.open(
-            blobUrl,
-            "_blank"
-          );
+        const newTab = window.open(
+          blobUrl,
+          "_blank"
+        );
 
         if (!newTab) {
-          URL.revokeObjectURL(
-            blobUrl
-          );
-
+          URL.revokeObjectURL(blobUrl);
           alert(
             "Please allow pop-ups for this chat."
           );
-
           return;
         }
 
         newTab.focus();
 
         setTimeout(() => {
-          URL.revokeObjectURL(
-            blobUrl
-          );
+          URL.revokeObjectURL(blobUrl);
         }, 60000);
 
         return;
       }
 
-      const link =
-        document.createElement(
-          "a"
-        );
+      const link = document.createElement("a");
 
       link.href = blobUrl;
-      link.download =
-        fileName ||
-        "file";
+      link.download = fileName || "file";
 
-      document.body.appendChild(
-        link
-      );
-
+      document.body.appendChild(link);
       link.click();
-
-      document.body.removeChild(
-        link
-      );
+      document.body.removeChild(link);
 
       setTimeout(() => {
-        URL.revokeObjectURL(
-          blobUrl
-        );
+        URL.revokeObjectURL(blobUrl);
       }, 1000);
     } catch (error) {
-      console.error(
-        "File open error:",
-        error
-      );
-
-      alert(
-        "Unable to open this file."
-      );
+      console.error("File open error:", error);
+      alert("Unable to open this file.");
     }
   };
 
@@ -1046,67 +857,38 @@ const ChatRoom = ({
     fileName
   ) => {
     if (!fileData) {
-      alert(
-        "File data is not available."
-      );
-
+      alert("File data is not available.");
       return;
     }
 
     try {
-      const blob =
-        createBlobFromData(
-          fileData,
-          fileType
-        );
+      const blob = createBlobFromData(
+        fileData,
+        fileType
+      );
 
       if (!blob) {
-        alert(
-          "Unable to download this file."
-        );
-
+        alert("Unable to download this file.");
         return;
       }
 
-      const blobUrl =
-        URL.createObjectURL(
-          blob
-        );
+      const blobUrl = URL.createObjectURL(blob);
 
-      const link =
-        document.createElement(
-          "a"
-        );
+      const link = document.createElement("a");
 
       link.href = blobUrl;
-      link.download =
-        fileName ||
-        "file";
+      link.download = fileName || "file";
 
-      document.body.appendChild(
-        link
-      );
-
+      document.body.appendChild(link);
       link.click();
-
-      document.body.removeChild(
-        link
-      );
+      document.body.removeChild(link);
 
       setTimeout(() => {
-        URL.revokeObjectURL(
-          blobUrl
-        );
+        URL.revokeObjectURL(blobUrl);
       }, 1000);
     } catch (error) {
-      console.error(
-        "Download error:",
-        error
-      );
-
-      alert(
-        "Unable to download this file."
-      );
+      console.error("Download error:", error);
+      alert("Unable to download this file.");
     }
   };
 
@@ -1114,54 +896,100 @@ const ChatRoom = ({
   // MESSAGE ACTIONS
   // ============================================================
 
-  const selectMessageForActions = (
-    messageIndex
-  ) => {
+  const selectMessageForActions = (messageIndex) => {
     setSelectedMessageIndex((prev) =>
       prev === messageIndex
         ? null
         : messageIndex
     );
+
+    setShowReactionPicker(false);
   };
 
-  const handleDeleteMessage = (
-    messageIndex
-  ) => {
+  const handleDeleteMessage = (messageIndex) => {
     setDeletedMessages((prev) => {
-      if (prev.includes(messageIndex)) {
-        return prev;
-      }
+      if (prev.includes(messageIndex)) return prev;
 
       return [...prev, messageIndex];
     });
 
     setFavoriteMessages((prev) =>
-      prev.filter(
-        (index) => index !== messageIndex
-      )
+      prev.filter((index) => index !== messageIndex)
     );
+
+    if (pinnedMessageIndex === messageIndex) {
+      setPinnedMessageIndex(null);
+    }
+
+    setMessageReactions((prev) => {
+      const next = { ...prev };
+      delete next[messageIndex];
+      return next;
+    });
+
+    setSelectedMessageIndex(null);
+    setShowReactionPicker(false);
+  };
+
+  const toggleFavoriteMessage = (messageIndex) => {
+    setFavoriteMessages((prev) => {
+      if (prev.includes(messageIndex)) {
+        return prev.filter(
+          (index) => index !== messageIndex
+        );
+      }
+
+      return [...prev, messageIndex];
+    });
 
     setSelectedMessageIndex(null);
   };
 
-  const toggleFavoriteMessage = (
-    messageIndex
-  ) => {
-    setFavoriteMessages((prev) => {
-      if (prev.includes(messageIndex)) {
-        return prev.filter(
-          (index) =>
-            index !== messageIndex
-        );
-      }
+  // ============================================================
+  // REACTION
+  // ============================================================
 
-      return [
-        ...prev,
-        messageIndex,
-      ];
+  const addReaction = (messageIndex, emoji) => {
+    setMessageReactions((prev) => ({
+      ...prev,
+      [messageIndex]: emoji,
+    }));
+
+    setSelectedMessageIndex(null);
+    setShowReactionPicker(false);
+  };
+
+  const removeReaction = (messageIndex) => {
+    setMessageReactions((prev) => {
+      const next = { ...prev };
+      delete next[messageIndex];
+      return next;
     });
 
     setSelectedMessageIndex(null);
+    setShowReactionPicker(false);
+  };
+
+  // ============================================================
+  // PIN MESSAGE
+  // ============================================================
+
+  const pinSelectedMessage = () => {
+    if (
+      selectedMessageIndex === null ||
+      deletedMessages.includes(selectedMessageIndex) ||
+      !messages[selectedMessageIndex]
+    ) {
+      return;
+    }
+
+    setPinnedMessageIndex(selectedMessageIndex);
+    setSelectedMessageIndex(null);
+    setShowMenu(false);
+  };
+
+  const unpinMessage = () => {
+    setPinnedMessageIndex(null);
   };
 
   // ============================================================
@@ -1183,16 +1011,23 @@ const ChatRoom = ({
     setShowSearch(true);
   };
 
+  const enableDarkMode = () => {
+    setDarkMode(true);
+    setShowMenu(false);
+  };
+
+  const enableLightMode = () => {
+    setDarkMode(false);
+    setShowMenu(false);
+  };
+
   // ============================================================
   // LEAVE GROUP
   // ============================================================
 
   const handleLeaveGroup = () => {
-    const cleanUsername =
-      username?.trim();
-
-    const cleanRoom =
-      room?.trim();
+    const cleanUsername = username?.trim();
+    const cleanRoom = room?.trim();
 
     if (
       socket &&
@@ -1210,9 +1045,7 @@ const ChatRoom = ({
 
     setShowMenu(false);
 
-    if (onLeave) {
-      onLeave();
-    }
+    if (onLeave) onLeave();
   };
 
   // ============================================================
@@ -1221,12 +1054,9 @@ const ChatRoom = ({
 
   const filteredMembers = [...members].sort(
     (a, b) => {
-      if (!memberSearch.trim()) {
-        return 0;
-      }
+      if (!memberSearch.trim()) return 0;
 
-      const search =
-        memberSearch.toLowerCase();
+      const search = memberSearch.toLowerCase();
 
       const aMatch = a
         .toLowerCase()
@@ -1236,20 +1066,14 @@ const ChatRoom = ({
         .toLowerCase()
         .includes(search);
 
-      if (aMatch && !bMatch) {
-        return -1;
-      }
-
-      if (!aMatch && bMatch) {
-        return 1;
-      }
+      if (aMatch && !bMatch) return -1;
+      if (!aMatch && bMatch) return 1;
 
       return 0;
     }
   );
 
-  const hasMessage =
-    message.trim().length > 0;
+  const hasMessage = message.trim().length > 0;
 
   const canSend =
     hasMessage ||
@@ -1260,15 +1084,12 @@ const ChatRoom = ({
   // HEADER
   // ============================================================
 
-  const headerMembers =
-    members.slice(0, 4);
+  const headerMembers = members.slice(0, 4);
 
   const headerMemberText =
     headerMembers.length > 0
       ? `${headerMembers.join(", ")}${
-          members.length > 4
-            ? "..."
-            : ""
+          members.length > 4 ? "..." : ""
         }`
       : "No members yet";
 
@@ -1276,25 +1097,40 @@ const ChatRoom = ({
   // FAVORITE LIST
   // ============================================================
 
-  const favoriteMessageItems =
-    favoriteMessages
-      .filter(
-        (index) =>
-          !deletedMessages.includes(index) &&
-          messages[index]
-      )
-      .map((index) => ({
-        ...messages[index],
-        originalIndex: index,
-      }));
+  const favoriteMessageItems = favoriteMessages
+    .filter(
+      (index) =>
+        !deletedMessages.includes(index) &&
+        messages[index]
+    )
+    .map((index) => ({
+      ...messages[index],
+      originalIndex: index,
+    }));
+
+  // ============================================================
+  // PINNED MESSAGE
+  // ============================================================
+
+  const pinnedMessage =
+    pinnedMessageIndex !== null &&
+    messages[pinnedMessageIndex] &&
+    !deletedMessages.includes(pinnedMessageIndex)
+      ? messages[pinnedMessageIndex]
+      : null;
 
   // ============================================================
   // RENDER
   // ============================================================
 
   return (
-    <div className="h-screen w-full flex flex-col bg-[#FFF7ED] overflow-hidden">
-
+    <div
+      className={`h-screen w-full flex flex-col overflow-hidden transition-colors duration-200 ${
+        darkMode
+          ? "bg-[#07111f] text-white"
+          : "bg-[#FFF7ED] text-[#071F49]"
+      }`}
+    >
       <style>{`
         @keyframes voiceMove {
           0% {
@@ -1325,18 +1161,11 @@ const ChatRoom = ({
       ======================================================== */}
 
       <header className="shrink-0 bg-[#F97316] text-white shadow-md z-40">
-
-        <div className="w-full px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
-
+        <div className="w-full px-3 sm:px-6 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-
-            <InitialAvatar
-              name={room}
-              large
-            />
+            <InitialAvatar name={room} large />
 
             <div className="min-w-0">
-
               <span className="block text-[10px] sm:text-xs font-bold uppercase tracking-[0.18em] text-orange-100">
                 GROUP
               </span>
@@ -1348,16 +1177,12 @@ const ChatRoom = ({
               <p className="text-xs text-orange-100 truncate mt-0.5">
                 {headerMemberText}
               </p>
-
             </div>
-
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
-
             {showSearch && (
-              <div className="flex items-center w-[180px] sm:w-[220px] h-9 rounded-lg bg-white/95 px-2 mr-1">
-
+              <div className="hidden xs:flex sm:flex items-center w-[170px] sm:w-[220px] h-9 rounded-lg bg-white/95 px-2 mr-1">
                 <svg
                   className="shrink-0 text-slate-400"
                   width="16"
@@ -1367,11 +1192,7 @@ const ChatRoom = ({
                   stroke="currentColor"
                   strokeWidth="2"
                 >
-                  <circle
-                    cx="11"
-                    cy="11"
-                    r="7"
-                  />
+                  <circle cx="11" cy="11" r="7" />
                   <path d="m20 20-3.5-3.5" />
                 </svg>
 
@@ -1380,9 +1201,7 @@ const ChatRoom = ({
                   type="text"
                   value={searchText}
                   onChange={(e) =>
-                    setSearchText(
-                      e.target.value
-                    )
+                    setSearchText(e.target.value)
                   }
                   placeholder="Search..."
                   className="w-full min-w-0 bg-transparent text-sm text-[#071F49] placeholder:text-slate-400 pl-2 outline-none"
@@ -1391,25 +1210,19 @@ const ChatRoom = ({
                 {searchText && (
                   <button
                     type="button"
-                    onClick={() =>
-                      setSearchText("")
-                    }
+                    onClick={() => setSearchText("")}
                     className="shrink-0 text-slate-400 hover:text-[#071F49]"
                   >
                     ✕
                   </button>
                 )}
-
               </div>
             )}
 
             <button
               type="button"
               onClick={() => {
-                setShowSearch(
-                  (prev) => !prev
-                );
-
+                setShowSearch((prev) => !prev);
                 setShowMenu(false);
               }}
               className={`w-10 h-10 rounded-full flex items-center justify-center transition ${
@@ -1428,23 +1241,16 @@ const ChatRoom = ({
                 stroke="currentColor"
                 strokeWidth="2"
               >
-                <circle
-                  cx="11"
-                  cy="11"
-                  r="7"
-                />
+                <circle cx="11" cy="11" r="7" />
                 <path d="m20 20-3.5-3.5" />
               </svg>
             </button>
 
             <div className="relative">
-
               <button
                 type="button"
                 onClick={() =>
-                  setShowMenu(
-                    (prev) => !prev
-                  )
+                  setShowMenu((prev) => !prev)
                 }
                 className={`w-10 h-10 rounded-full flex items-center justify-center transition ${
                   showMenu
@@ -1460,71 +1266,143 @@ const ChatRoom = ({
               </button>
 
               {showMenu && (
-                <div className="absolute right-0 top-12 w-56 bg-white rounded-xl shadow-2xl border border-slate-100 overflow-hidden text-[#071F49] z-50">
-
+                <div
+                  className={`absolute right-0 top-12 w-60 rounded-xl shadow-2xl border overflow-hidden z-50 ${
+                    darkMode
+                      ? "bg-[#101c2c] border-slate-700 text-white"
+                      : "bg-white border-slate-100 text-[#071F49]"
+                  }`}
+                >
                   <button
                     type="button"
                     onClick={openGroupInfo}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-sm hover:bg-orange-50 transition text-left"
+                    className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition text-left ${
+                      darkMode
+                        ? "hover:bg-slate-800"
+                        : "hover:bg-orange-50"
+                    }`}
                   >
-                    <span className="text-lg">
-                      👥
-                    </span>
-                    <span>
-                      Group Info
-                    </span>
+                    <span className="text-lg">👥</span>
+                    <span>Group Info</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={openSearch}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-sm hover:bg-orange-50 transition text-left"
+                    className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition text-left ${
+                      darkMode
+                        ? "hover:bg-slate-800"
+                        : "hover:bg-orange-50"
+                    }`}
                   >
-                    <span className="text-lg">
-                      🔍
-                    </span>
-                    <span>
-                      Search
-                    </span>
+                    <span className="text-lg">🔍</span>
+                    <span>Search</span>
                   </button>
 
                   <button
                     type="button"
-                    onClick={
-                      openFavoriteChat
-                    }
-                    className="w-full flex items-center gap-3 px-4 py-3 text-sm hover:bg-orange-50 transition text-left"
+                    onClick={openFavoriteChat}
+                    className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition text-left ${
+                      darkMode
+                        ? "hover:bg-slate-800"
+                        : "hover:bg-orange-50"
+                    }`}
                   >
                     <span className="text-lg text-red-500">
                       ♥
                     </span>
-                    <span>
-                      Favorite Chat
-                    </span>
+                    <span>Favorite Chat</span>
                   </button>
 
-                  <div className="h-px bg-slate-100" />
+                  {/* PIN MESSAGE */}
 
                   <button
                     type="button"
-                    onClick={
-                      handleLeaveGroup
+                    onClick={pinSelectedMessage}
+                    disabled={
+                      selectedMessageIndex === null ||
+                      deletedMessages.includes(
+                        selectedMessageIndex
+                      )
                     }
-                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition text-left font-semibold"
+                    className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition text-left ${
+                      selectedMessageIndex === null
+                        ? "text-slate-400 cursor-not-allowed"
+                        : darkMode
+                        ? "text-white hover:bg-slate-800"
+                        : "text-[#071F49] hover:bg-orange-50"
+                    }`}
                   >
-                    <span className="text-lg">
-                      ↪
-                    </span>
+                    <span className="text-lg">📌</span>
+
                     <span>
-                      Leave Group
+                      {pinnedMessageIndex !== null
+                        ? "Pin Another Message"
+                        : "Pin Message"}
                     </span>
                   </button>
 
+                  {/* DARK MODE */}
+
+                  <button
+                    type="button"
+                    onClick={enableDarkMode}
+                    className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition text-left ${
+                      darkMode
+                        ? "bg-slate-800 hover:bg-slate-700"
+                        : "hover:bg-orange-50"
+                    }`}
+                  >
+                    <span className="text-lg">🌙</span>
+                    <span>Dark Mode</span>
+
+                    {darkMode && (
+                      <span className="ml-auto text-xs font-bold text-orange-400">
+                        ON
+                      </span>
+                    )}
+                  </button>
+
+                  {/* LIGHT MODE */}
+
+                  <button
+                    type="button"
+                    onClick={enableLightMode}
+                    className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition text-left ${
+                      !darkMode
+                        ? "bg-orange-50"
+                        : "hover:bg-slate-800"
+                    }`}
+                  >
+                    <span className="text-lg">☀️</span>
+                    <span>Light Mode</span>
+
+                    {!darkMode && (
+                      <span className="ml-auto text-xs font-bold text-orange-500">
+                        ON
+                      </span>
+                    )}
+                  </button>
+
+                  <div
+                    className={`h-px ${
+                      darkMode
+                        ? "bg-slate-700"
+                        : "bg-slate-100"
+                    }`}
+                  />
+
+                  <button
+                    type="button"
+                    onClick={handleLeaveGroup}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-red-500 hover:bg-red-50/10 transition text-left font-semibold"
+                  >
+                    <span className="text-lg">↪</span>
+                    <span>Leave Group</span>
+                  </button>
                 </div>
               )}
-
             </div>
-
           </div>
         </div>
       </header>
@@ -1534,579 +1412,826 @@ const ChatRoom = ({
       ======================================================== */}
 
       <main
-        className="flex-1 overflow-y-auto px-3 sm:px-6 py-5"
+        className={`flex-1 overflow-y-auto px-3 sm:px-6 py-5 transition-colors ${
+          darkMode
+            ? "bg-[#07111f]"
+            : "bg-[#FFF7ED]"
+        }`}
         onClick={() => {
           setSelectedMessageIndex(null);
+          setShowReactionPicker(false);
         }}
       >
+        {/* PINNED MESSAGE */}
+
+        {pinnedMessage && (
+          <div
+            className={`mb-4 rounded-xl border shadow-sm overflow-hidden ${
+              darkMode
+                ? "bg-[#101c2c] border-orange-700"
+                : "bg-white border-orange-200"
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className={`flex items-center justify-between gap-3 px-4 py-2.5 border-b ${
+                darkMode
+                  ? "bg-orange-950/40 border-orange-900"
+                  : "bg-orange-50 border-orange-100"
+              }`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-lg">📌</span>
+
+                <div className="min-w-0">
+                  <p className="text-[10px] uppercase tracking-wider font-bold text-orange-500">
+                    Pinned Message
+                  </p>
+
+                  <p
+                    className={`text-xs font-semibold truncate ${
+                      darkMode
+                        ? "text-white"
+                        : "text-[#071F49]"
+                    }`}
+                  >
+                    {pinnedMessage.username === username
+                      ? "You"
+                      : pinnedMessage.username}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={unpinMessage}
+                className="shrink-0 px-3 py-1.5 rounded-lg bg-white border border-orange-200 text-xs font-semibold text-[#F97316] hover:bg-orange-100 transition"
+              >
+                Unpin
+              </button>
+            </div>
+
+            <div className="px-4 py-3">
+              {pinnedMessage.text && (
+                <p
+                  className={`text-sm whitespace-pre-wrap break-words ${
+                    darkMode
+                      ? "text-slate-100"
+                      : "text-[#071F49]"
+                  }`}
+                >
+                  {pinnedMessage.text}
+                </p>
+              )}
+
+              {pinnedMessage.fileName && (
+                <div
+                  className={`flex items-center gap-2 text-sm ${
+                    darkMode
+                      ? "text-slate-200"
+                      : "text-[#071F49]"
+                  }`}
+                >
+                  <span>📄</span>
+                  <span className="font-medium truncate">
+                    {pinnedMessage.fileName}
+                  </span>
+                </div>
+              )}
+
+              {pinnedMessage.voiceData && (
+                <div
+                  className={`text-sm ${
+                    darkMode
+                      ? "text-slate-200"
+                      : "text-[#071F49]"
+                  }`}
+                >
+                  🎙️ Voice message
+                </div>
+              )}
+
+              <p className="text-[10px] text-slate-400 mt-1">
+                {pinnedMessage.time}
+              </p>
+            </div>
+          </div>
+        )}
 
         {messages.length === 0 ? (
-
           <div className="h-full flex flex-col items-center justify-center text-center">
-
             <div className="w-16 h-16 rounded-2xl bg-orange-100 flex items-center justify-center text-3xl mb-3">
               💬
             </div>
 
-            <h3 className="text-lg font-semibold text-[#071F49]">
+            <h3
+              className={`text-lg font-semibold ${
+                darkMode
+                  ? "text-white"
+                  : "text-[#071F49]"
+              }`}
+            >
               No messages yet
             </h3>
 
             <p className="text-sm text-slate-400 mt-1">
-              Send a message to start the
-              conversation 👋
+              Send a message to start the conversation 👋
             </p>
-
           </div>
-
         ) : (
-
           <div className="space-y-4">
+            {messages.map((msg, idx) => {
+              if (deletedMessages.includes(idx)) {
+                return null;
+              }
 
-            {messages.map(
-              (msg, idx) => {
-
-                if (
-                  deletedMessages.includes(
-                    idx
-                  )
-                ) {
-                  return null;
-                }
-
-                if (
-                  msg?.type ===
-                  "user-joined-display"
-                ) {
-                  return (
-                    <div
-                      key={`system-join-${idx}`}
-                      className="flex justify-center py-1"
-                    >
-                      <div className="px-4 py-2 rounded-full bg-slate-200/80 text-slate-500 text-xs font-medium text-center shadow-sm">
-                        <span className="font-semibold text-slate-600">
-                          {msg.username}
-                        </span>{" "}
-                        joined the group
-                        <span className="mx-1.5 text-slate-400">
-                          •
-                        </span>
-                        {msg.time}
-                      </div>
-                    </div>
-                  );
-                }
-
-                if (
-                  msg?.type ===
-                  "user-left-display"
-                ) {
-                  return (
-                    <div
-                      key={`system-left-${idx}`}
-                      className="flex justify-center py-1"
-                    >
-                      <div className="px-4 py-2 rounded-full bg-slate-200/80 text-slate-500 text-xs font-medium text-center shadow-sm">
-                        <span className="font-semibold text-slate-600">
-                          {msg.username}
-                        </span>{" "}
-                        left the group
-                        <span className="mx-1.5 text-slate-400">
-                          •
-                        </span>
-                        {msg.time}
-                      </div>
-                    </div>
-                  );
-                }
-
-                const isOwn =
-                  msg?.username
-                    ?.trim()
-                    .toLowerCase() ===
-                  username
-                    ?.trim()
-                    .toLowerCase();
-
-                const messageColor =
-                  MESSAGE_COLORS[
-                    idx %
-                      MESSAGE_COLORS.length
-                  ];
-
-                const isSelected =
-                  selectedMessageIndex ===
-                  idx;
-
-                const isFavorite =
-                  favoriteMessages.includes(
-                    idx
-                  );
-
-                const isImage =
-                  msg.fileType?.startsWith(
-                    "image/"
-                  );
-
-                const isVideo =
-                  msg.fileType?.startsWith(
-                    "video/"
-                  );
-
-                const isAudio =
-                  msg.fileType?.startsWith(
-                    "audio/"
-                  );
-
+              if (
+                msg?.type ===
+                "user-joined-display"
+              ) {
                 return (
                   <div
-                    key={idx}
-                    className={`flex flex-col max-w-[95%] sm:max-w-[75%] ${
-                      isOwn
-                        ? "ml-auto items-end"
-                        : "mr-auto items-start"
-                    }`}
-                    onClick={(e) =>
-                      e.stopPropagation()
-                    }
+                    key={`system-join-${idx}`}
+                    className="flex justify-center py-1"
                   >
-
-                    <span className="text-xs font-semibold text-slate-500 mb-1 px-1">
-                      {isOwn
-                        ? "You"
-                        : msg.username}
-                    </span>
-
-                    <div
-                      className={`flex items-center gap-2 ${
-                        isOwn
-                          ? "justify-end"
-                          : "justify-start"
-                      }`}
-                    >
-
-                      {isSelected && (
-                        <div className="flex items-center gap-1.5 shrink-0">
-
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-
-                              toggleFavoriteMessage(
-                                idx
-                              );
-                            }}
-                            className={`w-9 h-9 rounded-full border shadow-md flex items-center justify-center transition ${
-                              isFavorite
-                                ? "bg-red-50 border-red-200 text-red-500"
-                                : "bg-slate-100/95 border-slate-200 text-slate-400 hover:bg-slate-200 hover:text-red-500"
-                            }`}
-                            title={
-                              isFavorite
-                                ? "Remove from favorites"
-                                : "Favorite message"
-                            }
-                          >
-                            <svg
-                              width="16"
-                              height="16"
-                              viewBox="0 0 24 24"
-                              fill={
-                                isFavorite
-                                  ? "currentColor"
-                                  : "none"
-                              }
-                              stroke="currentColor"
-                              strokeWidth="2"
-                            >
-                              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z" />
-                            </svg>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-
-                              handleDeleteMessage(
-                                idx
-                              );
-                            }}
-                            className="w-9 h-9 rounded-full bg-slate-100/95 border border-slate-200 text-slate-400 shadow-md flex items-center justify-center hover:bg-slate-200 hover:text-red-500 transition"
-                            title="Delete message"
-                          >
-                            <svg
-                              width="14"
-                              height="14"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                            >
-                              <path d="M3 6h18" />
-                              <path d="M8 6V4h8v2" />
-                              <path d="M19 6l-1 15H6L5 6" />
-                              <path d="M10 11v6" />
-                              <path d="M14 11v6" />
-                            </svg>
-                          </button>
-
-                        </div>
-                      )}
-
-                      <div
-                        className="relative"
-                        onClick={() =>
-                          selectMessageForActions(
-                            idx
-                          )
-                        }
-                      >
-
-                        <div
-                          className={`relative px-4 py-3 pr-16 rounded-2xl border shadow-sm ${messageColor} ${
-                            isOwn
-                              ? "rounded-br-sm"
-                              : "rounded-bl-sm"
-                          } ${
-                            isSelected
-                              ? "ring-2 ring-orange-300 ring-offset-1"
-                              : ""
-                          }`}
-                        >
-
-                          {msg.text && (
-                            <p className="text-[#071F49] break-words whitespace-pre-wrap">
-                              {renderHighlightedText(
-                                msg.text
-                              )}
-                            </p>
-                          )}
-
-                          {/* MEDIA */}
-
-                          {msg.fileData && (
-                            <div
-                              className={`${
-                                msg.text
-                                  ? "mt-3"
-                                  : ""
-                              } rounded-xl bg-white/90 border border-slate-200 p-3 min-w-[240px] max-w-[320px]`}
-                              onClick={(e) =>
-                                e.stopPropagation()
-                              }
-                            >
-
-                              {isImage && (
-                                <img
-                                  src={msg.fileData}
-                                  alt={
-                                    msg.fileName ||
-                                    "Image"
-                                  }
-                                  className="w-full max-h-64 object-cover rounded-lg border border-slate-200 mb-3 cursor-pointer"
-                                  onClick={() =>
-                                    openMediaInNewTab(
-                                      msg.fileData,
-                                      msg.fileType,
-                                      msg.fileName
-                                    )
-                                  }
-                                />
-                              )}
-
-                              {isVideo && (
-                                <video
-                                  src={msg.fileData}
-                                  controls
-                                  className="w-full max-h-64 rounded-lg border border-slate-200 mb-3 bg-black"
-                                />
-                              )}
-
-                              {!isImage &&
-                                !isVideo && (
-                                  <div className="flex items-center gap-3">
-
-                                    <div className="w-10 h-10 rounded-lg bg-orange-100 flex items-center justify-center shrink-0">
-
-                                      <svg
-                                        width="20"
-                                        height="20"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="#F97316"
-                                        strokeWidth="2"
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                      >
-                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                        <path d="M14 2v6h6" />
-                                      </svg>
-
-                                    </div>
-
-                                    <div className="min-w-0 flex-1">
-
-                                      <p className="font-semibold text-sm text-[#071F49] truncate">
-                                        {msg.fileName ||
-                                          "File"}
-                                      </p>
-
-                                      <p className="text-xs text-slate-400">
-                                        {msg.fileType ||
-                                          "File"}
-                                      </p>
-
-                                    </div>
-
-                                  </div>
-                              )}
-
-                              {isImage && (
-                                <p className="font-semibold text-xs text-[#071F49] truncate mb-2">
-                                  {msg.fileName ||
-                                    "Image"}
-                                </p>
-                              )}
-
-                              {isVideo && (
-                                <p className="font-semibold text-xs text-[#071F49] truncate mb-2">
-                                  {msg.fileName ||
-                                    "Video"}
-                                </p>
-                              )}
-
-                              <div className="grid grid-cols-2 gap-2 mt-2">
-
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-
-                                    openMediaInNewTab(
-                                      msg.fileData,
-                                      msg.fileType,
-                                      msg.fileName
-                                    );
-                                  }}
-                                  className="rounded-lg bg-[#F97316] hover:bg-orange-600 text-white text-xs font-semibold py-2 transition"
-                                >
-                                  Open
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-
-                                    downloadDocument(
-                                      msg.fileData,
-                                      msg.fileType,
-                                      msg.fileName
-                                    );
-                                  }}
-                                  className="rounded-lg bg-[#071F49] hover:bg-[#0b2d63] text-white text-xs font-semibold py-2 transition"
-                                >
-                                  Download
-                                </button>
-
-                              </div>
-
-                            </div>
-                          )}
-
-                          {/* VOICE */}
-
-                          {msg.voiceData && (
-                            <div
-                              className={`${
-                                msg.text ||
-                                msg.fileData
-                                  ? "mt-3"
-                                  : ""
-                              } rounded-xl bg-white/90 border border-slate-200 p-3 min-w-[250px]`}
-                              onClick={(e) =>
-                                e.stopPropagation()
-                              }
-                            >
-
-                              <div className="flex items-center gap-2 mb-2">
-
-                                <div className="w-9 h-9 rounded-full bg-orange-100 text-[#F97316] flex items-center justify-center shrink-0">
-                                  🎙️
-                                </div>
-
-                                <div className="min-w-0">
-
-                                  <p className="text-xs font-bold text-[#071F49]">
-                                    Voice message
-                                  </p>
-
-                                  <p className="text-[10px] text-slate-400">
-                                    {formatDuration(
-                                      msg.voiceDuration
-                                    )}
-                                  </p>
-
-                                </div>
-
-                              </div>
-
-                              <audio
-                                controls
-                                src={msg.voiceData}
-                                className="w-full h-9"
-                              />
-
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  downloadDocument(
-                                    msg.voiceData,
-                                    msg.voiceType ||
-                                      "audio/webm",
-                                    `voice-${idx}.webm`
-                                  )
-                                }
-                                className="w-full mt-2 rounded-lg bg-[#071F49] hover:bg-[#0b2d63] text-white text-xs font-semibold py-2 transition"
-                              >
-                                Download Voice
-                              </button>
-
-                            </div>
-                          )}
-
-                          <div className="absolute right-2 bottom-1.5">
-
-                            <span className="text-[10px] font-medium text-slate-500">
-                              {msg.time}
-                            </span>
-
-                          </div>
-
-                        </div>
-
-                      </div>
-
+                    <div className="px-4 py-2 rounded-full bg-slate-200/80 text-slate-500 text-xs font-medium text-center shadow-sm">
+                      <span className="font-semibold text-slate-600">
+                        {msg.username}
+                      </span>{" "}
+                      joined the group
+                      <span className="mx-1.5 text-slate-400">
+                        •
+                      </span>
+                      {msg.time}
                     </div>
-
                   </div>
                 );
               }
-            )}
+
+              if (
+                msg?.type ===
+                "user-left-display"
+              ) {
+                return (
+                  <div
+                    key={`system-left-${idx}`}
+                    className="flex justify-center py-1"
+                  >
+                    <div className="px-4 py-2 rounded-full bg-slate-200/80 text-slate-500 text-xs font-medium text-center shadow-sm">
+                      <span className="font-semibold text-slate-600">
+                        {msg.username}
+                      </span>{" "}
+                      left the group
+                      <span className="mx-1.5 text-slate-400">
+                        •
+                      </span>
+                      {msg.time}
+                    </div>
+                  </div>
+                );
+              }
+
+              const isOwn =
+                msg?.username
+                  ?.trim()
+                  .toLowerCase() ===
+                username
+                  ?.trim()
+                  .toLowerCase();
+
+              const messageColor =
+                MESSAGE_COLORS[
+                  idx % MESSAGE_COLORS.length
+                ];
+
+              const isSelected =
+                selectedMessageIndex === idx;
+
+              const isFavorite =
+                favoriteMessages.includes(idx);
+
+              const isImage =
+                msg.fileType?.startsWith("image/");
+
+              const isVideo =
+                msg.fileType?.startsWith("video/");
+
+              const isReaction =
+                messageReactions[idx];
+
+              return (
+                <div
+                  key={idx}
+                  className={`flex flex-col max-w-[96%] sm:max-w-[75%] ${
+                    isOwn
+                      ? "ml-auto items-end"
+                      : "mr-auto items-start"
+                  }`}
+                  onClick={(e) =>
+                    e.stopPropagation()
+                  }
+                >
+                  <span className="text-xs font-semibold text-slate-500 mb-1 px-1">
+                    {isOwn ? "You" : msg.username}
+                  </span>
+
+                  <div
+                    className={`flex items-center gap-2 ${
+                      isOwn
+                        ? "justify-end"
+                        : "justify-start"
+                    }`}
+                  >
+                    {isSelected && (
+                      <div
+                        className={`flex items-center gap-1.5 shrink-0 rounded-full p-1 ${
+                          darkMode
+                            ? "bg-[#101c2c]"
+                            : "bg-white"
+                        } shadow-lg`}
+                      >
+                        {/* REACTION */}
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+
+                            setShowReactionPicker(
+                              (prev) => !prev
+                            );
+                          }}
+                          className="w-9 h-9 rounded-full border border-slate-200 bg-slate-100 flex items-center justify-center hover:bg-orange-100 transition"
+                          title="React"
+                        >
+                          😊
+                        </button>
+
+                        {/* FAVORITE */}
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+
+                            toggleFavoriteMessage(idx);
+                          }}
+                          className={`w-9 h-9 rounded-full border shadow-md flex items-center justify-center transition ${
+                            isFavorite
+                              ? "bg-red-50 border-red-200 text-red-500"
+                              : "bg-slate-100/95 border-slate-200 text-slate-400 hover:bg-slate-200 hover:text-red-500"
+                          }`}
+                          title={
+                            isFavorite
+                              ? "Remove from favorites"
+                              : "Favorite message"
+                          }
+                        >
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill={
+                              isFavorite
+                                ? "currentColor"
+                                : "none"
+                            }
+                            stroke="currentColor"
+                            strokeWidth="2"
+                          >
+                            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z" />
+                          </svg>
+                        </button>
+
+                        {/* DELETE */}
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+
+                            handleDeleteMessage(idx);
+                          }}
+                          className="w-9 h-9 rounded-full bg-slate-100/95 border border-slate-200 text-slate-400 shadow-md flex items-center justify-center hover:bg-slate-200 hover:text-red-500 transition"
+                          title="Delete message"
+                        >
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                          >
+                            <path d="M3 6h18" />
+                            <path d="M8 6V4h8v2" />
+                            <path d="M19 6l-1 15H6L5 6" />
+                            <path d="M10 11v6" />
+                            <path d="M14 11v6" />
+                          </svg>
+                        </button>
+                      </div>
+                    )}
+
+                    <div
+                      className="relative"
+                      onClick={() =>
+                        selectMessageForActions(idx)
+                      }
+                    >
+                      {/* REACTION POPUP */}
+
+                      {isSelected &&
+                        showReactionPicker && (
+                          <div
+                            className={`absolute z-30 bottom-full mb-2 left-1/2 -translate-x-1/2 flex items-center gap-1 p-2 rounded-full shadow-xl border ${
+                              darkMode
+                                ? "bg-[#101c2c] border-slate-700"
+                                : "bg-white border-slate-200"
+                            }`}
+                            onClick={(e) =>
+                              e.stopPropagation()
+                            }
+                          >
+                            {REACTION_EMOJIS.map(
+                              (emoji) => (
+                                <button
+                                  key={emoji}
+                                  type="button"
+                                  onClick={() =>
+                                    addReaction(
+                                      idx,
+                                      emoji
+                                    )
+                                  }
+                                  className="w-8 h-8 rounded-full hover:bg-orange-100 text-lg transition"
+                                >
+                                  {emoji}
+                                </button>
+                              )
+                            )}
+                          </div>
+                        )}
+
+                      <div
+                        className={`relative px-4 py-3 pr-16 rounded-2xl border shadow-sm ${messageColor} ${
+                          isOwn
+                            ? "rounded-br-sm"
+                            : "rounded-bl-sm"
+                        } ${
+                          isSelected
+                            ? "ring-2 ring-orange-300 ring-offset-1"
+                            : ""
+                        }`}
+                      >
+                        {msg.text && (
+                          <p className="text-[#071F49] break-words whitespace-pre-wrap">
+                            {renderHighlightedText(
+                              msg.text
+                            )}
+                          </p>
+                        )}
+
+                        {/* MEDIA */}
+
+                        {msg.fileData && (
+                          <div
+                            className={`${
+                              msg.text ? "mt-3" : ""
+                            } rounded-xl bg-white/90 border border-slate-200 p-3 min-w-[220px] max-w-[320px]`}
+                            onClick={(e) =>
+                              e.stopPropagation()
+                            }
+                          >
+                            {isImage && (
+                              <img
+                                src={msg.fileData}
+                                alt={
+                                  msg.fileName ||
+                                  "Image"
+                                }
+                                className="w-full max-h-64 object-cover rounded-lg border border-slate-200 mb-3 cursor-pointer"
+                                onClick={() =>
+                                  openMediaInNewTab(
+                                    msg.fileData,
+                                    msg.fileType,
+                                    msg.fileName
+                                  )
+                                }
+                              />
+                            )}
+
+                            {isVideo && (
+                              <video
+                                src={msg.fileData}
+                                controls
+                                playsInline
+                                preload="metadata"
+                                className="w-full max-h-64 rounded-lg border border-slate-200 mb-3 bg-black"
+                              />
+                            )}
+
+                            {!isImage && !isVideo && (
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-lg bg-orange-100 flex items-center justify-center shrink-0">
+                                  📄
+                                </div>
+
+                                <div className="min-w-0 flex-1">
+                                  <p className="font-semibold text-sm text-[#071F49] truncate">
+                                    {msg.fileName ||
+                                      "File"}
+                                  </p>
+
+                                  <p className="text-xs text-slate-400">
+                                    {msg.fileType ||
+                                      "File"}
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+
+                            {(isImage || isVideo) && (
+                              <p className="font-semibold text-xs text-[#071F49] truncate mb-2">
+                                {msg.fileName ||
+                                  (isImage
+                                    ? "Image"
+                                    : "Video")}
+                              </p>
+                            )}
+
+                            <div className="grid grid-cols-2 gap-2 mt-2">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+
+                                  openMediaInNewTab(
+                                    msg.fileData,
+                                    msg.fileType,
+                                    msg.fileName
+                                  );
+                                }}
+                                className="rounded-lg bg-[#F97316] hover:bg-orange-600 text-white text-xs font-semibold py-2 transition"
+                              >
+                                Open
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+
+                                  downloadDocument(
+                                    msg.fileData,
+                                    msg.fileType,
+                                    msg.fileName
+                                  );
+                                }}
+                                className="rounded-lg bg-[#071F49] hover:bg-[#0b2d63] text-white text-xs font-semibold py-2 transition"
+                              >
+                                Download
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* VOICE */}
+
+                        {msg.voiceData && (
+                          <div
+                            className={`${
+                              msg.text || msg.fileData
+                                ? "mt-3"
+                                : ""
+                            } rounded-xl bg-white/90 border border-slate-200 p-3 min-w-[230px]`}
+                            onClick={(e) =>
+                              e.stopPropagation()
+                            }
+                          >
+                            <div className="flex items-center gap-2 mb-2">
+                              <div className="w-9 h-9 rounded-full bg-orange-100 text-[#F97316] flex items-center justify-center shrink-0">
+                                🎙️
+                              </div>
+
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-[#071F49]">
+                                  Voice message
+                                </p>
+
+                                <p className="text-[10px] text-slate-400">
+                                  {formatDuration(
+                                    msg.voiceDuration
+                                  )}
+                                </p>
+                              </div>
+                            </div>
+
+                            <audio
+                              controls
+                              src={msg.voiceData}
+                              className="w-full h-9"
+                            />
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                downloadDocument(
+                                  msg.voiceData,
+                                  msg.voiceType ||
+                                    "audio/webm",
+                                  `voice-${idx}.webm`
+                                )
+                              }
+                              className="w-full mt-2 rounded-lg bg-[#071F49] hover:bg-[#0b2d63] text-white text-xs font-semibold py-2 transition"
+                            >
+                              Download Voice
+                            </button>
+                          </div>
+                        )}
+
+                        <div className="absolute right-2 bottom-1.5">
+                          <span className="text-[10px] font-medium text-slate-500">
+                            {msg.time}
+                          </span>
+                        </div>
+
+                        {/* REACTION DISPLAY */}
+
+                        {isReaction && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeReaction(idx);
+                            }}
+                            className="absolute -bottom-3 left-3 min-w-7 h-7 px-1.5 rounded-full bg-white border border-slate-200 shadow-md flex items-center justify-center text-sm hover:scale-110 transition"
+                            title="Remove reaction"
+                          >
+                            {isReaction}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
 
             <div ref={messagesEndRef} />
-
           </div>
         )}
-
       </main>
 
       {/* ========================================================
           COMPOSER
       ======================================================== */}
 
-      <footer className="shrink-0 bg-white border-t border-orange-100 px-3 sm:px-6 py-3 relative">
-
+      <footer
+        className={`shrink-0 border-t px-3 sm:px-6 py-3 relative transition-colors ${
+          darkMode
+            ? "bg-[#0b1726] border-slate-700"
+            : "bg-white border-orange-100"
+        }`}
+      >
         {showEmojiPicker && (
           <div className="absolute bottom-full left-3 mb-2 z-50 shadow-xl rounded-xl overflow-hidden">
-
             <EmojiPicker
-              onEmojiClick={
-                handleEmojiClick
-              }
+              onEmojiClick={handleEmojiClick}
               width={300}
               height={350}
               previewConfig={{
                 showPreview: false,
               }}
             />
-
           </div>
         )}
 
+        {/* ATTACHMENT MENU */}
+
+        {showAttachmentMenu && (
+          <div
+            className={`absolute bottom-full left-[50px] sm:left-[70px] mb-2 w-60 rounded-2xl shadow-2xl border overflow-hidden z-50 ${
+              darkMode
+                ? "bg-[#101c2c] border-slate-700"
+                : "bg-white border-slate-100"
+            }`}
+          >
+            <div
+              className={`px-4 py-3 text-xs font-bold uppercase tracking-wider ${
+                darkMode
+                  ? "text-slate-300 border-b border-slate-700"
+                  : "text-slate-400 border-b border-slate-100"
+              }`}
+            >
+              Attach
+            </div>
+
+            {/* DOCUMENTS */}
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowAttachmentMenu(false);
+                fileInputRef.current?.click();
+              }}
+              className={`w-full flex items-center gap-3 px-4 py-3 text-left transition ${
+                darkMode
+                  ? "hover:bg-slate-800 text-white"
+                  : "hover:bg-orange-50 text-[#071F49]"
+              }`}
+            >
+              <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-lg">
+                📄
+              </div>
+
+              <div>
+                <p className="text-sm font-semibold">
+                  Documents
+                </p>
+
+                <p className="text-xs text-slate-400">
+                  PDF, Word, Excel, ZIP...
+                </p>
+              </div>
+            </button>
+
+            {/* PICTURES / VIDEOS */}
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowAttachmentMenu(false);
+                mediaInputRef.current?.click();
+              }}
+              className={`w-full flex items-center gap-3 px-4 py-3 text-left transition ${
+                darkMode
+                  ? "hover:bg-slate-800 text-white"
+                  : "hover:bg-orange-50 text-[#071F49]"
+              }`}
+            >
+              <div className="w-10 h-10 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center text-lg">
+                🖼️
+              </div>
+
+              <div>
+                <p className="text-sm font-semibold">
+                  Pictures & Videos
+                </p>
+
+                <p className="text-xs text-slate-400">
+                  Select photos or videos
+                </p>
+              </div>
+            </button>
+
+            {/* CAMERA */}
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowAttachmentMenu(false);
+                cameraInputRef.current?.click();
+              }}
+              className={`w-full flex items-center gap-3 px-4 py-3 text-left transition ${
+                darkMode
+                  ? "hover:bg-slate-800 text-white"
+                  : "hover:bg-orange-50 text-[#071F49]"
+              }`}
+            >
+              <div className="w-10 h-10 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-lg">
+                📷
+              </div>
+
+              <div>
+                <p className="text-sm font-semibold">
+                  Camera
+                </p>
+
+                <p className="text-xs text-slate-400">
+                  Take a picture
+                </p>
+              </div>
+            </button>
+          </div>
+        )}
+
+        {/* HIDDEN INPUTS */}
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+
+        <input
+          ref={mediaInputRef}
+          type="file"
+          accept="image/*,video/*"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+
         {/* QUICK EMOJIS */}
 
-        <div className="flex gap-1.5 overflow-x-auto pb-2">
-
-          {QUICK_EMOJIS.map(
-            (emoji) => (
-              <button
-                key={emoji}
-                type="button"
-                onClick={() =>
-                  addQuickEmoji(emoji)
-                }
-                className="shrink-0 h-8 w-8 rounded-lg hover:bg-orange-100 transition text-lg"
-              >
-                {emoji}
-              </button>
-            )
-          )}
-
+        <div className="flex gap-1.5 overflow-x-auto pb-2 max-w-full">
+          {QUICK_EMOJIS.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              onClick={() => addQuickEmoji(emoji)}
+              className={`shrink-0 h-8 w-8 rounded-lg transition text-lg ${
+                darkMode
+                  ? "hover:bg-slate-700"
+                  : "hover:bg-orange-100"
+              }`}
+            >
+              {emoji}
+            </button>
+          ))}
         </div>
 
         {/* SELECTED FILE */}
 
         {selectedFile && (
-          <div className="mb-2 flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2">
-
+          <div
+            className={`mb-2 flex items-center gap-3 rounded-xl border px-3 py-2 ${
+              darkMode
+                ? "border-orange-800 bg-orange-950/30"
+                : "border-orange-200 bg-orange-50"
+            }`}
+          >
             <div className="w-10 h-10 rounded-lg bg-orange-100 flex items-center justify-center shrink-0 text-xl">
-
-              {selectedFile.type?.startsWith(
-                "image/"
-              )
+              {selectedFile.type?.startsWith("image/")
                 ? "🖼️"
                 : selectedFile.type?.startsWith(
                     "video/"
                   )
                 ? "🎥"
                 : "📄"}
-
             </div>
 
             <div className="min-w-0 flex-1">
-
-              <p className="text-sm font-semibold text-[#071F49] truncate">
+              <p
+                className={`text-sm font-semibold truncate ${
+                  darkMode
+                    ? "text-white"
+                    : "text-[#071F49]"
+                }`}
+              >
                 {selectedFile.name}
               </p>
 
               <p className="text-xs text-slate-400">
-                {formatFileSize(
-                  selectedFile.size
-                )}{" "}
-                • Ready to send
+                {formatFileSize(selectedFile.size)} •
+                Ready to send
               </p>
-
             </div>
 
             <button
               type="button"
-              onClick={
-                removeSelectedFile
-              }
+              onClick={removeSelectedFile}
               className="w-8 h-8 rounded-lg hover:bg-white text-slate-400 hover:text-red-600 transition"
               title="Remove file"
             >
               ✕
             </button>
-
           </div>
         )}
 
         {/* SELECTED VOICE */}
 
         {selectedVoice && !isRecording && (
-          <div className="mb-2 flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2">
-
+          <div
+            className={`mb-2 flex items-center gap-3 rounded-xl border px-3 py-2 ${
+              darkMode
+                ? "border-orange-800 bg-orange-950/30"
+                : "border-orange-200 bg-orange-50"
+            }`}
+          >
             <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center text-[#F97316] shrink-0">
               🎙️
             </div>
 
             <div className="min-w-0 flex-1">
-
-              <p className="text-sm font-semibold text-[#071F49]">
+              <p
+                className={`text-sm font-semibold ${
+                  darkMode
+                    ? "text-white"
+                    : "text-[#071F49]"
+                }`}
+              >
                 Voice message
               </p>
 
@@ -2116,7 +2241,6 @@ const ChatRoom = ({
                 )}{" "}
                 • Ready to send
               </p>
-
             </div>
 
             <audio
@@ -2127,15 +2251,12 @@ const ChatRoom = ({
 
             <button
               type="button"
-              onClick={
-                removeSelectedVoice
-              }
+              onClick={removeSelectedVoice}
               className="w-8 h-8 rounded-lg hover:bg-white text-slate-400 hover:text-red-600 transition"
               title="Remove voice"
             >
               ✕
             </button>
-
           </div>
         )}
 
@@ -2143,19 +2264,17 @@ const ChatRoom = ({
 
         <form
           onSubmit={handleSend}
-          className="flex items-center gap-2"
+          className="flex items-center gap-2 w-full max-w-5xl mx-auto"
         >
-
           {/* EMOJI */}
 
           <button
             type="button"
-            onClick={() =>
-              setShowEmojiPicker(
-                (prev) => !prev
-              )
-            }
-            className="shrink-0 w-10 h-10 rounded-xl bg-orange-100 hover:bg-orange-200 text-xl transition"
+            onClick={() => {
+              setShowEmojiPicker((prev) => !prev);
+              setShowAttachmentMenu(false);
+            }}
+            className="shrink-0 w-10 h-10 rounded-full bg-orange-100 hover:bg-orange-200 text-xl transition flex items-center justify-center"
             aria-label="Open emoji picker"
             title="Emoji"
           >
@@ -2166,10 +2285,11 @@ const ChatRoom = ({
 
           <button
             type="button"
-            onClick={() =>
-              fileInputRef.current?.click()
-            }
-            className="shrink-0 w-10 h-10 rounded-xl bg-orange-100 hover:bg-orange-200 text-[#F97316] flex items-center justify-center transition"
+            onClick={() => {
+              setShowAttachmentMenu((prev) => !prev);
+              setShowEmojiPicker(false);
+            }}
+            className="shrink-0 w-10 h-10 rounded-full bg-orange-100 hover:bg-orange-200 text-[#F97316] flex items-center justify-center transition"
             aria-label="Attach file"
             title="Photo, Video or Document"
           >
@@ -2185,29 +2305,14 @@ const ChatRoom = ({
             </svg>
           </button>
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
-            onChange={
-              handleFileChange
-            }
-            className="hidden"
-          />
-
-          {/* ONE INPUT BOX + VOICE */}
+          {/* INPUT */}
 
           <div className="relative flex-1 min-w-0">
-
             {isRecording ? (
-
-              <div className="relative w-full h-11 rounded-xl border-2 border-[#F97316] bg-orange-50 overflow-hidden flex items-center px-3">
-
+              <div className="relative w-full h-11 rounded-full border-2 border-[#F97316] bg-orange-50 overflow-hidden flex items-center px-3">
                 <button
                   type="button"
-                  onClick={
-                    cancelVoiceRecording
-                  }
+                  onClick={cancelVoiceRecording}
                   className="relative z-20 shrink-0 w-8 h-8 rounded-full bg-red-50 text-red-600 hover:bg-red-100 flex items-center justify-center font-bold"
                   title="Cancel recording"
                 >
@@ -2215,10 +2320,7 @@ const ChatRoom = ({
                 </button>
 
                 <div className="relative flex-1 h-full flex items-center px-3 overflow-hidden">
-
-                  <div
-                    className="absolute left-0 right-0 h-1 rounded-full bg-orange-100 overflow-hidden"
-                  >
+                  <div className="absolute left-0 right-0 h-1 rounded-full bg-orange-100 overflow-hidden">
                     <div
                       className="absolute w-24 h-1 rounded-full bg-[#F97316]"
                       style={{
@@ -2229,7 +2331,6 @@ const ChatRoom = ({
                   </div>
 
                   <div className="relative z-10 flex items-center gap-2 bg-orange-50/90 pr-2">
-
                     <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
 
                     <span className="text-sm font-semibold text-[#071F49]">
@@ -2237,15 +2338,11 @@ const ChatRoom = ({
                     </span>
 
                     <span className="text-xs font-bold text-[#F97316]">
-                      {formatDuration(
-                        recordingTime
-                      )}
+                      {formatDuration(recordingTime)}
                     </span>
-
                   </div>
 
                   <div className="absolute right-2 flex items-center gap-1 h-7">
-
                     {[4, 7, 10, 6, 9, 5, 8].map(
                       (height, index) => (
                         <span
@@ -2253,36 +2350,27 @@ const ChatRoom = ({
                           className="w-1 rounded-full bg-[#F97316]"
                           style={{
                             height: `${height * 2}px`,
-                            animation:
-                              `voiceBars 0.7s ease-in-out ${
-                                index * 0.08
-                              }s infinite`,
+                            animation: `voiceBars 0.7s ease-in-out ${
+                              index * 0.08
+                            }s infinite`,
                           }}
                         />
                       )
                     )}
-
                   </div>
-
                 </div>
 
                 <button
                   type="button"
-                  onClick={
-                    stopVoiceRecording
-                  }
+                  onClick={stopVoiceRecording}
                   className="relative z-20 shrink-0 w-9 h-9 rounded-full bg-[#F97316] hover:bg-orange-600 text-white flex items-center justify-center shadow-sm"
                   title="Stop recording"
                 >
                   <span className="w-3.5 h-3.5 rounded-sm bg-white" />
                 </button>
-
               </div>
-
             ) : (
-
               <div className="relative w-full">
-
                 <input
                   type="text"
                   placeholder={
@@ -2292,28 +2380,33 @@ const ChatRoom = ({
                   }
                   value={message}
                   onChange={(e) =>
-                    setMessage(
-                      e.target.value
-                    )
+                    setMessage(e.target.value)
                   }
-                  disabled={
-                    !!selectedVoice
-                  }
-                  className="w-full h-11 rounded-xl border-2 border-orange-300 bg-orange-50/30 pl-4 pr-14 py-2.5 text-[#071F49] placeholder:text-slate-400 outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-100 focus:bg-white transition disabled:cursor-default disabled:text-slate-500"
+                  disabled={!!selectedVoice}
+                  className={`w-full h-11 rounded-full border-2 pl-4 pr-14 py-2.5 outline-none transition ${
+                    darkMode
+                      ? "border-slate-600 bg-[#101c2c] text-white placeholder:text-slate-500 focus:border-orange-500 focus:ring-4 focus:ring-orange-950"
+                      : "border-orange-300 bg-orange-50/30 text-[#071F49] placeholder:text-slate-400 focus:border-orange-500 focus:ring-4 focus:ring-orange-100 focus:bg-white"
+                  }`}
                   autoFocus
+                  onKeyDown={(e) => {
+                    if (
+                      e.key === "Enter" &&
+                      !e.shiftKey
+                    ) {
+                      e.preventDefault();
+                      handleSend(e);
+                    }
+                  }}
                 />
 
-                {/* MIC INSIDE INPUT */}
+                {/* MIC */}
 
                 <button
                   type="button"
-                  onClick={
-                    startVoiceRecording
-                  }
-                  disabled={
-                    !!selectedVoice
-                  }
-                  className={`absolute right-1.5 top-1/2 -translate-y-1/2 w-9 h-9 rounded-lg flex items-center justify-center transition ${
+                  onClick={startVoiceRecording}
+                  disabled={!!selectedVoice}
+                  className={`absolute right-1.5 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full flex items-center justify-center transition ${
                     selectedVoice
                       ? "bg-slate-100 text-slate-300 cursor-not-allowed"
                       : "bg-orange-100 text-[#F97316] hover:bg-orange-200"
@@ -2322,8 +2415,8 @@ const ChatRoom = ({
                   aria-label="Record voice"
                 >
                   <svg
-                    width="19"
-                    height="19"
+                    width="18"
+                    height="18"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
@@ -2343,11 +2436,8 @@ const ChatRoom = ({
                     <path d="M8 22h8" />
                   </svg>
                 </button>
-
               </div>
-
             )}
-
           </div>
 
           {/* SEND */}
@@ -2355,17 +2445,29 @@ const ChatRoom = ({
           <button
             type="submit"
             disabled={!canSend || isRecording}
-            className={`shrink-0 px-5 py-2.5 rounded-xl text-white font-semibold shadow-sm transition ${
+            className={`shrink-0 w-11 h-11 rounded-full flex items-center justify-center text-white shadow-md transition ${
               canSend && !isRecording
-                ? "bg-[#F97316] hover:bg-orange-600"
+                ? "bg-[#F97316] hover:bg-orange-600 hover:scale-105"
                 : "bg-orange-200 cursor-not-allowed"
             }`}
+            title="Send"
+            aria-label="Send message"
           >
-            Send
+            <svg
+              width="19"
+              height="19"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M22 2 11 13" />
+              <path d="m22 2-7 20-4-9-9-4Z" />
+            </svg>
           </button>
-
         </form>
-
       </footer>
 
       {/* ========================================================
@@ -2374,21 +2476,18 @@ const ChatRoom = ({
 
       {showGroupInfo && (
         <div
-          className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={() =>
-            setShowGroupInfo(false)
-          }
+          className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setShowGroupInfo(false)}
         >
-
           <div
-            className="w-full max-w-md max-h-[85vh] bg-white rounded-2xl shadow-2xl overflow-hidden"
-            onClick={(e) =>
-              e.stopPropagation()
-            }
+            className={`w-full max-w-md max-h-[85vh] rounded-2xl shadow-2xl overflow-hidden ${
+              darkMode
+                ? "bg-[#101c2c] text-white"
+                : "bg-white"
+            }`}
+            onClick={(e) => e.stopPropagation()}
           >
-
             <div className="bg-[#F97316] text-white px-5 py-4 flex items-center justify-between">
-
               <h3 className="text-lg font-bold">
                 Group Info
               </h3>
@@ -2402,23 +2501,29 @@ const ChatRoom = ({
               >
                 ✕
               </button>
-
             </div>
 
-            <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
-
-              <InitialAvatar
-                name={room}
-                large
-              />
+            <div
+              className={`px-5 py-4 border-b flex items-center gap-3 ${
+                darkMode
+                  ? "border-slate-700"
+                  : "border-slate-100"
+              }`}
+            >
+              <InitialAvatar name={room} large />
 
               <div className="min-w-0">
-
                 <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-orange-500">
                   GROUP
                 </p>
 
-                <h4 className="text-base font-bold text-[#071F49] truncate">
+                <h4
+                  className={`text-base font-bold truncate ${
+                    darkMode
+                      ? "text-white"
+                      : "text-[#071F49]"
+                  }`}
+                >
                   {room}
                 </h4>
 
@@ -2428,15 +2533,17 @@ const ChatRoom = ({
                     ? "member"
                     : "members"}
                 </p>
-
               </div>
-
             </div>
 
-            <div className="p-4 border-b border-slate-100">
-
+            <div
+              className={`p-4 border-b ${
+                darkMode
+                  ? "border-slate-700"
+                  : "border-slate-100"
+              }`}
+            >
               <div className="relative">
-
                 <svg
                   className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
                   width="18"
@@ -2446,11 +2553,7 @@ const ChatRoom = ({
                   stroke="currentColor"
                   strokeWidth="2"
                 >
-                  <circle
-                    cx="11"
-                    cy="11"
-                    r="7"
-                  />
+                  <circle cx="11" cy="11" r="7" />
                   <path d="m20 20-3.5-3.5" />
                 </svg>
 
@@ -2458,22 +2561,20 @@ const ChatRoom = ({
                   type="text"
                   value={memberSearch}
                   onChange={(e) =>
-                    setMemberSearch(
-                      e.target.value
-                    )
+                    setMemberSearch(e.target.value)
                   }
                   placeholder="Search members..."
-                  className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-10 py-2.5 text-[#071F49] placeholder:text-slate-400 outline-none focus:border-orange-400 focus:bg-white transition"
+                  className={`w-full rounded-xl border-2 px-10 py-2.5 outline-none transition ${
+                    darkMode
+                      ? "border-slate-600 bg-[#0b1726] text-white placeholder:text-slate-500 focus:border-orange-400"
+                      : "border-slate-200 bg-slate-50 text-[#071F49] placeholder:text-slate-400 focus:border-orange-400 focus:bg-white"
+                  }`}
                 />
-
               </div>
-
             </div>
 
             <div className="px-4 py-3">
-
               <div className="flex items-center justify-between mb-2">
-
                 <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
                   Members
                 </p>
@@ -2481,16 +2582,13 @@ const ChatRoom = ({
                 <span className="text-xs font-semibold text-orange-500">
                   {members.length}
                 </span>
-
               </div>
 
               <div className="max-h-[48vh] overflow-y-auto">
-
                 {filteredMembers.map(
                   (member, index) => {
                     const isCurrentUser =
-                      member
-                        .toLowerCase() ===
+                      member.toLowerCase() ===
                       username
                         ?.trim()
                         .toLowerCase();
@@ -2498,19 +2596,26 @@ const ChatRoom = ({
                     return (
                       <div
                         key={`${member}-${index}`}
-                        className="flex items-center gap-3 py-3 border-b border-slate-50 last:border-0"
+                        className={`flex items-center gap-3 py-3 border-b last:border-0 ${
+                          darkMode
+                            ? "border-slate-800"
+                            : "border-slate-50"
+                        }`}
                       >
-
                         <InitialAvatar
                           name={member}
                           small
                         />
 
                         <div className="min-w-0 flex-1">
-
                           <div className="flex items-center gap-2">
-
-                            <p className="font-semibold text-sm text-[#071F49] truncate">
+                            <p
+                              className={`font-semibold text-sm truncate ${
+                                darkMode
+                                  ? "text-white"
+                                  : "text-[#071F49]"
+                              }`}
+                            >
                               {member}
                             </p>
 
@@ -2519,7 +2624,6 @@ const ChatRoom = ({
                                 YOU
                               </span>
                             )}
-
                           </div>
 
                           {isCurrentUser && (
@@ -2527,18 +2631,14 @@ const ChatRoom = ({
                               You
                             </p>
                           )}
-
                         </div>
-
                       </div>
                     );
                   }
                 )}
 
-                {filteredMembers.length ===
-                  0 && (
+                {filteredMembers.length === 0 && (
                   <div className="py-8 text-center">
-
                     <div className="w-10 h-10 mx-auto rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-2">
                       🔍
                     </div>
@@ -2550,16 +2650,11 @@ const ChatRoom = ({
                     <p className="text-xs text-slate-400 mt-1">
                       This member is not in the group.
                     </p>
-
                   </div>
                 )}
-
               </div>
-
             </div>
-
           </div>
-
         </div>
       )}
 
@@ -2569,52 +2664,37 @@ const ChatRoom = ({
 
       {showFavoriteCard && (
         <div
-          className="fixed inset-0 z-[110] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
+          className="fixed inset-0 z-[110] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
           onClick={() =>
             setShowFavoriteCard(false)
           }
         >
-
           <div
-            className="w-full max-w-md max-h-[80vh] bg-white rounded-2xl shadow-2xl overflow-hidden"
-            onClick={(e) =>
-              e.stopPropagation()
-            }
+            className={`w-full max-w-md max-h-[80vh] rounded-2xl shadow-2xl overflow-hidden ${
+              darkMode
+                ? "bg-[#101c2c]"
+                : "bg-white"
+            }`}
+            onClick={(e) => e.stopPropagation()}
           >
-
             <div className="bg-[#F97316] text-white px-5 py-4 flex items-center justify-between">
-
               <div className="flex items-center gap-3">
-
                 <div className="w-10 h-10 rounded-full bg-white/15 flex items-center justify-center">
-
-                  <svg
-                    width="19"
-                    height="19"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                  >
-                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z" />
-                  </svg>
-
+                  ♥
                 </div>
 
                 <div>
-
                   <h3 className="text-lg font-bold">
                     Favorite Messages
                   </h3>
 
                   <p className="text-xs text-orange-100">
                     {favoriteMessageItems.length}{" "}
-                    {favoriteMessageItems.length ===
-                    1
+                    {favoriteMessageItems.length === 1
                       ? "favorite"
                       : "favorites"}
                   </p>
-
                 </div>
-
               </div>
 
               <button
@@ -2626,185 +2706,164 @@ const ChatRoom = ({
               >
                 ✕
               </button>
-
             </div>
 
             <div className="p-4 max-h-[60vh] overflow-y-auto">
-
-              {favoriteMessageItems.length ===
-              0 ? (
-
+              {favoriteMessageItems.length === 0 ? (
                 <div className="py-10 text-center">
-
                   <div className="w-14 h-14 mx-auto rounded-2xl bg-orange-100 flex items-center justify-center text-2xl mb-3">
                     ♡
                   </div>
 
-                  <h4 className="font-semibold text-[#071F49]">
+                  <h4
+                    className={`font-semibold ${
+                      darkMode
+                        ? "text-white"
+                        : "text-[#071F49]"
+                    }`}
+                  >
                     No Favorite Messages
                   </h4>
 
                   <p className="text-xs text-slate-400 mt-1 max-w-[260px] mx-auto">
-                    Click a message and use the heart
-                    icon to add it to favorites.
+                    Click a message and use the heart icon
+                    to add it to favorites.
                   </p>
-
                 </div>
-
               ) : (
-
                 <div className="space-y-3">
+                  {favoriteMessageItems.map((msg) => {
+                    const isOwn =
+                      msg?.username
+                        ?.trim()
+                        .toLowerCase() ===
+                      username
+                        ?.trim()
+                        .toLowerCase();
 
-                  {favoriteMessageItems.map(
-                    (msg) => {
-                      const isOwn =
-                        msg?.username
-                          ?.trim()
-                          .toLowerCase() ===
-                        username
-                          ?.trim()
-                          .toLowerCase();
+                    return (
+                      <div
+                        key={msg.originalIndex}
+                        className={`rounded-xl border p-3 ${
+                          darkMode
+                            ? "border-slate-700 bg-[#0b1726]"
+                            : "border-slate-200 bg-slate-50"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3 mb-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <InitialAvatar
+                              name={msg.username}
+                              small
+                            />
 
-                      return (
-                        <div
-                          key={
-                            msg.originalIndex
-                          }
-                          className="rounded-xl border border-slate-200 bg-slate-50 p-3"
-                        >
-
-                          <div className="flex items-center justify-between gap-3 mb-2">
-
-                            <div className="flex items-center gap-2 min-w-0">
-
-                              <InitialAvatar
-                                name={
-                                  msg.username
-                                }
-                                small
-                              />
-
-                              <div className="min-w-0">
-
-                                <p className="text-xs font-bold text-[#071F49] truncate">
-                                  {isOwn
-                                    ? "You"
-                                    : msg.username}
-                                </p>
-
-                                <p className="text-[10px] text-slate-400">
-                                  {msg.time}
-                                </p>
-
-                              </div>
-
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                toggleFavoriteMessage(
-                                  msg.originalIndex
-                                )
-                              }
-                              className="shrink-0 w-8 h-8 rounded-full bg-red-50 text-red-500 hover:bg-red-100 flex items-center justify-center transition"
-                              title="Remove favorite"
-                            >
-                              <svg
-                                width="15"
-                                height="15"
-                                viewBox="0 0 24 24"
-                                fill="currentColor"
+                            <div className="min-w-0">
+                              <p
+                                className={`text-xs font-bold truncate ${
+                                  darkMode
+                                    ? "text-white"
+                                    : "text-[#071F49]"
+                                }`}
                               >
-                                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z" />
-                              </svg>
-                            </button>
+                                {isOwn
+                                  ? "You"
+                                  : msg.username}
+                              </p>
 
+                              <p className="text-[10px] text-slate-400">
+                                {msg.time}
+                              </p>
+                            </div>
                           </div>
 
-                          {msg.text && (
-                            <p className="text-sm text-[#071F49] whitespace-pre-wrap break-words">
-                              {msg.text}
-                            </p>
-                          )}
-
-                          {msg.fileName && (
-                            <div className="mt-2 rounded-lg bg-white border border-slate-200 px-3 py-2">
-
-                              <p className="text-xs font-semibold text-[#071F49] truncate">
-                                📄{" "}
-                                {msg.fileName}
-                              </p>
-
-                              {msg.fileData && (
-                                <div className="flex gap-3 mt-2">
-
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      openMediaInNewTab(
-                                        msg.fileData,
-                                        msg.fileType,
-                                        msg.fileName
-                                      )
-                                    }
-                                    className="text-xs font-semibold text-[#F97316] hover:underline"
-                                  >
-                                    Open
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      downloadDocument(
-                                        msg.fileData,
-                                        msg.fileType,
-                                        msg.fileName
-                                      )
-                                    }
-                                    className="text-xs font-semibold text-[#071F49] hover:underline"
-                                  >
-                                    Download
-                                  </button>
-
-                                </div>
-                              )}
-
-                            </div>
-                          )}
-
-                          {msg.voiceData && (
-                            <div className="mt-2 rounded-lg bg-white border border-slate-200 px-3 py-2">
-
-                              <p className="text-xs font-semibold text-[#071F49] mb-2">
-                                🎙️ Voice message
-                              </p>
-
-                              <audio
-                                controls
-                                src={msg.voiceData}
-                                className="w-full h-8"
-                              />
-
-                            </div>
-                          )}
-
+                          <button
+                            type="button"
+                            onClick={() =>
+                              toggleFavoriteMessage(
+                                msg.originalIndex
+                              )
+                            }
+                            className="shrink-0 w-8 h-8 rounded-full bg-red-50 text-red-500 hover:bg-red-100 flex items-center justify-center transition"
+                            title="Remove favorite"
+                          >
+                            ♥
+                          </button>
                         </div>
-                      );
-                    }
-                  )}
 
+                        {msg.text && (
+                          <p
+                            className={`text-sm whitespace-pre-wrap break-words ${
+                              darkMode
+                                ? "text-slate-200"
+                                : "text-[#071F49]"
+                            }`}
+                          >
+                            {msg.text}
+                          </p>
+                        )}
+
+                        {msg.fileName && (
+                          <div className="mt-2 rounded-lg bg-white border border-slate-200 px-3 py-2">
+                            <p className="text-xs font-semibold text-[#071F49] truncate">
+                              📄 {msg.fileName}
+                            </p>
+
+                            {msg.fileData && (
+                              <div className="flex gap-3 mt-2">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openMediaInNewTab(
+                                      msg.fileData,
+                                      msg.fileType,
+                                      msg.fileName
+                                    )
+                                  }
+                                  className="text-xs font-semibold text-[#F97316] hover:underline"
+                                >
+                                  Open
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    downloadDocument(
+                                      msg.fileData,
+                                      msg.fileType,
+                                      msg.fileName
+                                    )
+                                  }
+                                  className="text-xs font-semibold text-[#071F49] hover:underline"
+                                >
+                                  Download
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {msg.voiceData && (
+                          <div className="mt-2 rounded-lg bg-white border border-slate-200 px-3 py-2">
+                            <p className="text-xs font-semibold text-[#071F49] mb-2">
+                              🎙️ Voice message
+                            </p>
+
+                            <audio
+                              controls
+                              src={msg.voiceData}
+                              className="w-full h-8"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-
               )}
-
             </div>
-
           </div>
-
         </div>
       )}
-
     </div>
   );
 };
